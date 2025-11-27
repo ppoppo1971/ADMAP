@@ -656,10 +656,13 @@ class DxfPhotoEditor {
         });
         
         if (menuBackBtn) {
-            menuBackBtn.addEventListener('click', (e) => {
+            menuBackBtn.addEventListener('click', async (e) => {
                 e.stopPropagation();
                 this.closeSlideMenu();
-                this.showFileList();
+                
+                // GitHub에서 프로그램을 다시 로드하기 위해 페이지 새로고침
+                // 캐시를 무시하고 최신 버전 로드
+                await this.reloadFromGitHub();
             });
         }
         
@@ -1553,6 +1556,58 @@ class DxfPhotoEditor {
         this.redraw();
         this.autoSave();
         this.showToast('🗑️ 텍스트가 삭제되었습니다.');
+    }
+    
+    /**
+     * GitHub에서 프로그램을 다시 로드 (캐시 무시)
+     */
+    async reloadFromGitHub() {
+        try {
+            console.log('🔄 GitHub에서 프로그램 다시 로드 시작...');
+            this.showToast('🔄 최신 버전 로드 중...');
+            
+            // Service Worker 캐시 삭제 (있는 경우)
+            if ('caches' in window) {
+                try {
+                    const cacheNames = await caches.keys();
+                    for (const cacheName of cacheNames) {
+                        await caches.delete(cacheName);
+                        console.log(`✅ 캐시 삭제: ${cacheName}`);
+                    }
+                } catch (error) {
+                    console.warn('⚠️ 캐시 삭제 중 오류:', error);
+                }
+            }
+            
+            // Service Worker 등록 해제 (있는 경우)
+            if ('serviceWorker' in navigator) {
+                try {
+                    const registrations = await navigator.serviceWorker.getRegistrations();
+                    for (const registration of registrations) {
+                        await registration.unregister();
+                        console.log('✅ Service Worker 등록 해제');
+                    }
+                } catch (error) {
+                    console.warn('⚠️ Service Worker 해제 중 오류:', error);
+                }
+            }
+            
+            // 잠시 대기 후 페이지 새로고침 (캐시 무시)
+            await new Promise(resolve => setTimeout(resolve, 300));
+            
+            // 쿼리 파라미터를 추가하여 강제 새로고침 (캐시 무시)
+            const url = new URL(window.location.href);
+            url.searchParams.set('reload', Date.now().toString());
+            url.searchParams.set('backToList', 'true'); // 목록 화면으로 돌아갈 것을 표시
+            
+            // 페이지 새로고침 (캐시 무시)
+            window.location.href = url.toString();
+            
+        } catch (error) {
+            console.error('❌ GitHub에서 다시 로드 실패:', error);
+            // 오류 발생 시 일반 새로고침 시도
+            window.location.reload(true);
+        }
     }
     
     /**
@@ -6110,6 +6165,18 @@ async function startApp() {
     app = new DxfPhotoEditor();
     window.app = app; // google-drive.js에서 접근 가능하도록 전역 노출
     console.log('✅ DXF Photo Editor 초기화 완료');
+
+    // 목록 버튼으로 돌아온 경우 목록 화면 표시
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('backToList') === 'true') {
+        console.log('📋 목록 화면으로 돌아오기');
+        app.showFileList();
+        // reload 파라미터 제거 (URL 정리)
+        urlParams.delete('reload');
+        urlParams.delete('backToList');
+        const cleanUrl = window.location.pathname + (urlParams.toString() ? '?' + urlParams.toString() : '');
+        window.history.replaceState({}, '', cleanUrl);
+    }
 
     if (window.driveManager?.isAccessTokenValid()) {
         app.setLoginButtonState(true);
