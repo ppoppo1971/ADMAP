@@ -3582,10 +3582,17 @@ class DxfPhotoEditor {
             this.debugLog('   ✓ 이미지 로드 완료 (크기:', image.width, 'x', image.height, ')');
             
             // 이미지 압축 (설정된 용량에 따라)
-            this.showToast('🔄 이미지 변환 중...');
             this.debugLog('3️⃣ 이미지 압축 시작...');
             const targetSize = this.getImageTargetSize();
             this.debugLog('   목표 용량:', targetSize === null ? '원본' : `${(targetSize / 1024).toFixed(0)}KB`);
+            
+            // 변환 중 메시지 (목표 용량 표시)
+            if (targetSize === null) {
+                this.showToast('🔄 변환 중 (원본)');
+            } else {
+                const targetSizeKB = (targetSize / 1024).toFixed(0);
+                this.showToast(`🔄 변환 중 (${targetSizeKB}KB)`);
+            }
             
             let compressedImageData;
             if (targetSize === null) {
@@ -3636,7 +3643,7 @@ class DxfPhotoEditor {
             
             // Google Drive 자동 저장 (사진 추가는 즉시 저장)
             this.debugLog('7️⃣ 자동 저장 시작...');
-            this.showToast('☁️ 저장 중...');
+            this.showToast('☁️ 저장 중 (구글드라이브)');
             await this.autoSave(true); // force=true: 즉시 저장
             
             // 동일 좌표에 추가된 경우 모달 다시 열기
@@ -4876,6 +4883,10 @@ class DxfPhotoEditor {
             
             // 새로운 사진이 있거나 메타데이터가 변경되었을 때만 업로드
             if (needsMetadataUpdate) {
+                // 저장 중 메시지 표시 (addPhotoAt에서 이미 표시한 경우 중복 방지)
+                // 단, addPhotoAt에서 이미 "☁️ 저장 중 (구글드라이브)"를 표시했으므로
+                // 여기서는 표시하지 않음 (중복 방지)
+                
                 const appData = {
                     photos: newPhotos,  // 새로운 사진만
                     allPhotos: this.photos,  // 전체 사진 목록 (메타데이터용)
