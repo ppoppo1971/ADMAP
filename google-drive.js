@@ -714,23 +714,51 @@ window.initGoogleDrive = async function() {
                 console.log('✅ 메타데이터 저장 완료');
                 
                 // 2. 새로운 사진 파일들만 업로드
+                // 개별 에러 처리: 일부 사진이 실패해도 나머지는 계속 업로드
                 if (appData.photos.length > 0) {
                     console.log(`📸 새 사진 업로드 시작 (${appData.photos.length}개)...`);
                     const allPhotos = appData.allPhotos || appData.photos;
                     
+                    let successCount = 0;
+                    let failCount = 0;
+                    
                     for (let i = 0; i < appData.photos.length; i++) {
                         const photo = appData.photos[i];
-                        // allPhotos에서 이 사진의 인덱스를 찾아서 파일명 결정
-                        ensurePhotoFileName(photo);
-                        const photoFileName = photo.fileName;
-                        
-                        console.log(`   [${i + 1}/${appData.photos.length}] ${photoFileName} 업로드 중...`);
-                        await window.driveManager.uploadImage(photoFileName, photo.imageData);
-                        console.log(`   ✅ ${photoFileName} 업로드 완료`);
-                        photo.fileName = photoFileName;
-                        photo.uploaded = true;
+                        try {
+                            // allPhotos에서 이 사진의 인덱스를 찾아서 파일명 결정
+                            ensurePhotoFileName(photo);
+                            const photoFileName = photo.fileName;
+                            
+                            console.log(`   [${i + 1}/${appData.photos.length}] ${photoFileName} 업로드 중...`);
+                            await window.driveManager.uploadImage(photoFileName, photo.imageData);
+                            console.log(`   ✅ ${photoFileName} 업로드 완료`);
+                            photo.fileName = photoFileName;
+                            photo.uploaded = true;
+                            successCount++;
+                            
+                            // 각 사진 업로드 완료 시 즉시 화면 업데이트 (마커 색상 변경: 초록색 → 빨간색)
+                            // window.app이 존재하면 redraw() 호출하여 실시간 업데이트
+                            if (window.app && typeof window.app.redraw === 'function') {
+                                window.app.redraw();
+                            }
+                        } catch (error) {
+                            // 개별 사진 업로드 실패 시에도 나머지 사진은 계속 업로드
+                            console.error(`   ❌ ${photo.fileName || '사진'} 업로드 실패:`, error.message);
+                            photo.uploaded = false; // 업로드 실패 상태 유지 (초록색 점 표시)
+                            failCount++;
+                            
+                            // 화면 업데이트 (초록색 점으로 표시됨)
+                            if (window.app && typeof window.app.redraw === 'function') {
+                                window.app.redraw();
+                            }
+                        }
                     }
-                    console.log('✅ 모든 사진 업로드 완료');
+                    
+                    if (failCount > 0) {
+                        console.warn(`⚠️ 일부 사진 업로드 실패: 성공 ${successCount}개, 실패 ${failCount}개`);
+                    } else {
+                        console.log(`✅ 모든 사진 업로드 완료 (${successCount}개)`);
+                    }
                 } else {
                     console.log('⏭️ 업로드할 새 사진 없음');
                 }
