@@ -3392,120 +3392,21 @@ class DxfPhotoEditor {
         this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
         this.debugLog('            Canvas 초기화 완료 (크기:', this.canvas.width, 'x', this.canvas.height, ')');
         
-        // 사진과 텍스트, 현재 위치가 없으면 빠르게 리턴
-        const hasPhotos = this.photos.length > 0;
-        const hasTexts = this.texts.length > 0;
-        const hasCurrentLocation = this.currentLocationData && 
-                                   this.currentLocationData.dxfX !== null && 
-                                   this.currentLocationData.dxfY !== null;
-        
-        if (!hasPhotos && !hasTexts && !hasCurrentLocation) {
-            this.debugLog('            사진/텍스트/현재위치 없음 - 건너뜀');
+        // 사진과 텍스트가 없으면 빠르게 리턴
+        if (this.photos.length === 0 && this.texts.length === 0) {
+            this.debugLog('            사진/텍스트 없음 - 건너뜀');
             return;
         }
         
         // 사진 마커 그리기
-        if (hasPhotos) {
-            this.debugLog('            사진 그리기 시작 (' + this.photos.length + '개)');
-            this.drawPhotos();
-        }
+        this.debugLog('            사진 그리기 시작 (' + this.photos.length + '개)');
+        this.drawPhotos();
         
         // 텍스트 그리기
-        if (hasTexts) {
-            this.debugLog('            텍스트 그리기 시작 (' + this.texts.length + '개)');
-            this.drawTexts();
-        }
-        
-        // 현재 위치 마커는 지도 위에만 표시 (핀 이모지)
-        // DXF 도면 위에는 원형 마커를 그리지 않음
+        this.debugLog('            텍스트 그리기 시작 (' + this.texts.length + '개)');
+        this.drawTexts();
         
         this.debugLog('         ✅ drawPhotosCanvas 완료');
-    }
-    
-    /**
-     * 현재 위치 마커 그리기 (DXF 도면 위 Canvas)
-     * - WGS84 좌표를 EPSG:5186으로 변환한 후 ViewBox 좌표로 변환하여 Canvas에 그리기
-     */
-    drawCurrentLocationMarker() {
-        if (!this.currentLocationData || 
-            this.currentLocationData.dxfX === null || 
-            this.currentLocationData.dxfY === null) {
-            return;
-        }
-        
-        const rect = this.getCachedRect();
-        const margin = 50; // 여유 공간
-        
-        // DXF 좌표를 ViewBox 좌표로 변환 (이미 변환된 dxfX, dxfY 사용)
-        const dxfX = this.currentLocationData.dxfX;
-        const dxfY = this.currentLocationData.dxfY;
-        
-        // ViewBox 좌표로 변환 (DXF 좌표는 이미 ViewBox 좌표계와 동일)
-        // ViewBox 좌표 → 스크린 좌표 변환
-        const { x: screenX, y: screenY } = this.viewToCanvasCoords(dxfX, -dxfY); // DXF Y축은 반대
-        
-        // 화면 밖에 있는지 확인 (여유 공간 포함)
-        if (screenX < -margin || 
-            screenX > rect.width + margin || 
-            screenY < -margin || 
-            screenY > rect.height + margin) {
-            return; // 화면 밖이면 그리지 않음
-        }
-        
-        // 정확도 정보
-        const accuracy = this.currentLocationData.accuracy || 0;
-        
-        // 현재 위치 마커 그리기 (빨간색 큰 점)
-        const markerRadius = 12; // 마커 반지름
-        const outerRadius = markerRadius + 4; // 외곽 원 반지름
-        
-        // 외곽 원 (반투명 빨간색)
-        this.ctx.fillStyle = 'rgba(255, 0, 0, 0.3)';
-        this.ctx.beginPath();
-        this.ctx.arc(screenX, screenY, outerRadius, 0, Math.PI * 2);
-        this.ctx.fill();
-        
-        // 내부 원 (진한 빨간색)
-        this.ctx.fillStyle = '#FF0000';
-        this.ctx.beginPath();
-        this.ctx.arc(screenX, screenY, markerRadius, 0, Math.PI * 2);
-        this.ctx.fill();
-        
-        // 중앙 작은 점 (흰색)
-        this.ctx.fillStyle = '#FFFFFF';
-        this.ctx.beginPath();
-        this.ctx.arc(screenX, screenY, 4, 0, Math.PI * 2);
-        this.ctx.fill();
-        
-        // 정확도 표시 (선택적 - 정확도가 낮으면 표시)
-        if (accuracy > 50) {
-            // 정확도 반경 표시 (반투명 원)
-            const accuracyRadius = Math.min(accuracy * this.scale * 0.001, 100); // 최대 100px
-            this.ctx.strokeStyle = 'rgba(255, 0, 0, 0.5)';
-            this.ctx.lineWidth = 2;
-            this.ctx.setLineDash([5, 5]); // 점선
-            this.ctx.beginPath();
-            this.ctx.arc(screenX, screenY, accuracyRadius, 0, Math.PI * 2);
-            this.ctx.stroke();
-            this.ctx.setLineDash([]); // 점선 해제
-        }
-        
-        // 텍스트 레이블 (선택적 - 정확도 표시)
-        if (accuracy > 0) {
-            this.ctx.fillStyle = '#000000';
-            this.ctx.font = 'bold 12px Arial';
-            this.ctx.textAlign = 'center';
-            this.ctx.textBaseline = 'top';
-            this.ctx.fillText(`${accuracy.toFixed(0)}m`, screenX, screenY + markerRadius + 5);
-        }
-        
-        this.debugLog('               📍 현재 위치 마커 그리기 완료:', {
-            screenX: screenX.toFixed(1),
-            screenY: screenY.toFixed(1),
-            dxfX: dxfX.toFixed(2),
-            dxfY: dxfY.toFixed(2),
-            accuracy: accuracy.toFixed(1) + 'm'
-        });
     }
     
     /**
@@ -5332,35 +5233,6 @@ class DxfPhotoEditor {
     }
     
     /**
-     * WGS84 좌표를 EPSG:5186으로 변환
-     * @param {number} lng - 경도 (WGS84)
-     * @param {number} lat - 위도 (WGS84)
-     * @returns {Object} { x, y } EPSG:5186 좌표
-     */
-    convertWGS84To5186(lng, lat) {
-        if (typeof proj4 === 'undefined') {
-            console.error('❌ proj4 라이브러리가 로드되지 않았습니다');
-            return null;
-        }
-        
-        try {
-            // EPSG:5186 정의 (한국 중부원점)
-            proj4.defs('EPSG:5186', '+proj=tmerc +lat_0=38 +lon_0=127 +k=1 +x_0=200000 +y_0=600000 +ellps=GRS80 +units=m +no_defs');
-            
-            // EPSG:4326 정의 (WGS84)
-            proj4.defs('EPSG:4326', '+proj=longlat +datum=WGS84 +no_defs');
-            
-            // 좌표 변환 (WGS84 → EPSG:5186)
-            const [x, y] = proj4('EPSG:4326', 'EPSG:5186', [lng, lat]);
-            
-            return { x, y };
-        } catch (error) {
-            console.error('❌ 좌표 변환 실패:', error);
-            return null;
-        }
-    }
-    
-    /**
      * DXF 도면 경계를 WGS84로 변환
      */
     convertDxfBoundsToWGS84() {
@@ -5913,14 +5785,13 @@ class DxfPhotoEditor {
         this.svg.style.background = '#e8e8e8';
         
         // 원본 ViewBox로 복원 (지도 모드가 아닐 때)
-        // 단, 현재 위치가 표시되어 있으면 ViewBox를 유지 (화면 중심 유지)
-        if (this.originalViewBox && !this.currentLocationData) {
+        if (this.originalViewBox) {
             this.viewBox = {...this.originalViewBox};
             this.updateViewBox();
         }
         
-        // 현재 위치 마커는 제거하지 않음 (DXF 도면 위에 표시되지 않지만 지도 위 마커는 유지)
-        // clearCurrentLocationMarker() 호출하지 않음
+        // 현재 위치 마커 제거
+        this.clearCurrentLocationMarker();
         
         console.log('✅ 지도 숨김');
         this.showToast('🗺️ 지도 숨김');
@@ -5968,12 +5839,13 @@ class DxfPhotoEditor {
     
     /**
      * 현재 위치 표시
-     * - GPS 위치 측정
-     * - 지도가 없으면 자동으로 지도를 활성화하여 현재 위치 표시
-     * - DXF 도면 위에도 Canvas로 표시
-     * - 표시 완료 후 지도가 자동으로 비활성화된 경우 지도를 다시 숨김
      */
     async showCurrentLocation() {
+        if (!this.map) {
+            this.showToast('지도를 먼저 켜주세요');
+            return;
+        }
+        
         // 기존 마커 제거
         this.clearCurrentLocationMarker();
         
@@ -5992,12 +5864,7 @@ class DxfPhotoEditor {
             maximumAge: 0 // 캐시 사용 안 함
         };
         
-        // 지도가 이미 활성화되어 있었는지 확인 (자동 비활성화 여부 결정)
-        const wasMapActiveBefore = this.map && this.isMapMode;
-        
         try {
-            // GPS 위치 측정
-            this.showToast('📍 위치 측정 중...');
             const position = await new Promise((resolve, reject) => {
                 navigator.geolocation.getCurrentPosition(resolve, reject, options);
             });
@@ -6027,24 +5894,21 @@ class DxfPhotoEditor {
                 console.warn('⚠️ 위치 정확도가 낮습니다 (' + accuracy.toFixed(0) + 'm)');
             }
             
-            // 지도가 없으면 자동으로 활성화
-            if (!this.map) {
-                console.log('📍 지도가 없음 - 자동으로 구글맵 활성화');
-                this.showToast('🗺️ 지도 자동 활성화 중...');
-                await this.showMap('google');
-                
-                // 지도 초기화 대기
-                if (!this.map) {
-                    this.showToast('지도를 불러올 수 없습니다');
-                    return;
-                }
-            }
-            
-            // 현재 위치를 화면 중심으로 이동
+            // 현재 위치 중심으로 확대
+            const currentZoom = this.map.getZoom();
             this.map.setCenter(currentLocation);
-            this.map.setZoom(15); // 고정 줌 레벨로 현재 위치 중심 표시
+            this.map.setZoom(Math.max(currentZoom, 15));
             
-            // 현재 위치 마커 생성 (지도 위) - 핀 이모지 사용
+            // 현재 위치 정보 저장
+            this.currentLocationData = {
+                lat,
+                lng,
+                accuracy,
+                positionTime,
+                isMobile
+            };
+            
+            // 현재 위치 마커 생성
             this.currentLocationMarker = new google.maps.Marker({
                 position: currentLocation,
                 map: this.map,
@@ -6067,104 +5931,8 @@ class DxfPhotoEditor {
                 this.openCurrentLocationInfo();
             });
             
-            // WGS84 → EPSG:5186 변환 (DXF 도면 위에 표시하기 위함)
-            let dxfCoord = null;
-            if (this.dxfBounds && typeof proj4 !== 'undefined') {
-                dxfCoord = this.convertWGS84To5186(lng, lat);
-                if (dxfCoord) {
-                    console.log('📍 현재 위치 DXF 좌표:', {
-                        x: dxfCoord.x.toFixed(2),
-                        y: dxfCoord.y.toFixed(2)
-                    });
-                }
-            }
-            
-            // 현재 위치 정보 저장
-            this.currentLocationData = {
-                lat,
-                lng,
-                accuracy,
-                positionTime,
-                isMobile,
-                dxfX: dxfCoord ? dxfCoord.x : null,
-                dxfY: dxfCoord ? dxfCoord.y : null
-            };
-            
-            // DXF 도면 위에도 현재 위치 표시 (Canvas로 그리기)
-            if (this.dxfData && this.currentLocationData.dxfX !== null && this.currentLocationData.dxfY !== null) {
-                // 현재 위치를 화면 중심으로 이동
-                const rect = this.getCachedRect();
-                if (rect) {
-                    // 현재 위치 DXF 좌표를 ViewBox 좌표로 변환 (Y축 반전)
-                    const currentLocationViewBoxX = this.currentLocationData.dxfX;
-                    const currentLocationViewBoxY = -this.currentLocationData.dxfY; // Y축 반전
-                    
-                    // 화면 중심 좌표를 ViewBox 좌표로 변환
-                    const centerViewBoxX = this.viewBox.x + this.viewBox.width / 2;
-                    const centerViewBoxY = this.viewBox.y + this.viewBox.height / 2;
-                    
-                    // ViewBox를 현재 위치 중심으로 이동
-                    const deltaX = centerViewBoxX - currentLocationViewBoxX;
-                    const deltaY = centerViewBoxY - currentLocationViewBoxY;
-                    
-                    this.viewBox.x += deltaX;
-                    this.viewBox.y += deltaY;
-                    
-                    // ViewBox 업데이트
-                    this.updateViewBox();
-                }
-                
-                // Canvas 다시 그리기 (원형 마커는 그리지 않음, 핀 이모지는 지도 위에만 표시)
-                this.redraw();
-                console.log('✅ 현재 위치 화면 중심으로 이동 완료');
-            }
-            
             console.log('✅ 현재 위치 표시 완료 (정확도: ' + accuracy.toFixed(0) + 'm)');
             this.showToast('📍 현재 위치 표시 완료');
-            
-            // 지도가 이전에 활성화되어 있지 않았으면 자동으로 비활성화
-            // (일시적으로 지도를 보여주고 현재 위치를 확인한 후 다시 숨김)
-            if (!wasMapActiveBefore) {
-                // 약간의 지연 후 지도 숨김 (사용자가 현재 위치를 확인할 시간 제공)
-                setTimeout(() => {
-                    // 현재 위치 마커는 유지하기 위해 clearCurrentLocationMarker를 호출하지 않음
-                    // 대신 지도만 숨기고, DXF 도면 위의 마커는 유지
-                    if (this.mapContainer) {
-                        this.isMapMode = false;
-                        this.lastSyncedViewBoxSize = null;
-                        
-                        // 지도 bounds 리스너 제거
-                        if (this.mapBoundsListener && this.map && window.google && window.google.maps) {
-                            google.maps.event.removeListener(this.mapBoundsListener);
-                            this.mapBoundsListener = null;
-                        }
-                        
-                        // throttle timeout 제거
-                        if (this.boundsChangeTimeout) {
-                            clearTimeout(this.boundsChangeTimeout);
-                            this.boundsChangeTimeout = null;
-                        }
-                        
-                        this.mapContainer.style.display = 'none';
-                        this.mapContainer.style.visibility = 'hidden';
-                        this.mapContainer.style.opacity = '0';
-                        this.mapContainer.classList.remove('visible');
-                        this.currentMapType = null;
-                        
-                        // SVG 배경 복원
-                        this.svg.style.background = '#e8e8e8';
-                        
-                        // 원본 ViewBox로 복원하지 않음 (현재 위치 중심 유지)
-                        // 현재 위치가 표시되어 있으면 ViewBox를 유지하여 화면 중심 유지
-                        // this.viewBox는 현재 위치 중심으로 이미 설정되어 있음
-                        
-                        // 현재 위치 마커는 유지 (지도 위 마커는 유지, DXF 도면 위에는 표시 안 함)
-                        // clearCurrentLocationMarker() 호출하지 않음
-                        
-                        console.log('✅ 지도 자동 비활성화 (현재 위치 중심 유지)');
-                    }
-                }, 2000); // 2초 후 지도 숨김
-            }
             
         } catch (error) {
             console.error('❌ 위치 정보를 가져올 수 없습니다:', error);
@@ -6219,31 +5987,6 @@ class DxfPhotoEditor {
         if (!this.currentLocationInfoWindow) {
             this.currentLocationInfoWindow = new google.maps.InfoWindow({
                 maxWidth: isMobile ? 280 : 320
-            });
-            
-            // InfoWindow가 열릴 때 닫기 버튼(X) 제거
-            google.maps.event.addListener(this.currentLocationInfoWindow, 'domready', () => {
-                // InfoWindow 패널 내에서 닫기 버튼 찾아서 DOM에서 완전히 제거
-                setTimeout(() => {
-                    // 모든 닫기 버튼 찾기 (InfoWindow 내부)
-                    const closeButtons = document.querySelectorAll('.gm-ui-hover-effect');
-                    closeButtons.forEach(btn => {
-                        // 닫기 버튼인지 확인 (aria-label이나 title 확인)
-                        const ariaLabel = btn.getAttribute('aria-label') || '';
-                        const title = btn.getAttribute('title') || '';
-                        
-                        // 닫기 버튼인지 확인 (다양한 언어/형식 지원)
-                        const isCloseButton = 
-                            ariaLabel.toLowerCase().includes('close') || 
-                            ariaLabel.includes('닫기') ||
-                            title.toLowerCase().includes('close') ||
-                            title.includes('닫기');
-                        
-                        if (isCloseButton) {
-                            btn.remove(); // DOM에서 완전히 제거 (CSS 숨김이 아닌 실제 제거)
-                        }
-                    });
-                }, 100); // DOM 렌더링 완료 대기
             });
         }
         this.currentLocationInfoWindow.setContent(infoContent);
