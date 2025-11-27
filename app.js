@@ -3569,8 +3569,6 @@ class DxfPhotoEditor {
         
         this.debugLog('▶ 사진 추가 프로세스 시작:', file.name);
         this.debugLog('   위치:', { x: position.x, y: position.y });
-        this.showLoading(true);
-        
         try {
             // 이미지 로드
             this.debugLog('1️⃣ 이미지 데이터 읽기 시작...');
@@ -3586,7 +3584,7 @@ class DxfPhotoEditor {
             const targetSize = this.getImageTargetSize();
             this.debugLog('   목표 용량:', targetSize === null ? '원본' : `${(targetSize / 1024).toFixed(0)}KB`);
             
-            // 변환 중 메시지 (목표 용량 표시)
+            // 변환 중 메시지 (목표 용량 표시) - 로딩 인디케이터 대신 토스트 메시지 사용
             if (targetSize === null) {
                 this.showToast('🔄 변환 중 (원본)');
             } else {
@@ -3669,8 +3667,6 @@ class DxfPhotoEditor {
             console.error('오류 스택:', error.stack);
             this.showToast(`❌ 사진 추가 실패: ${error.message}`);
             throw error; // 에러를 다시 던져서 상위에서도 처리할 수 있게 함
-        } finally {
-            this.showLoading(false);
         }
     }
     
@@ -4490,14 +4486,12 @@ class DxfPhotoEditor {
             }
             
             try {
-                this.showLoading(true);
+                this.showToast('📥 사진 다운로드 중...');
                 imageData = await window.downloadFileByNameAsDataUrl(photo.fileName);
                 fetchedTempData = !!imageData;
             } catch (error) {
                 console.error('❌ 사진 다운로드 실패:', error);
                 this.showToast('⚠️ 사진을 불러오지 못했습니다.');
-            } finally {
-                this.showLoading(false);
             }
             
             if (!imageData) {
@@ -4947,7 +4941,8 @@ class DxfPhotoEditor {
             return;
         }
         
-        this.showLoading(true, '사진 누락 확인 중...');
+        // 사진 누락 확인 시작 - 토스트 메시지로 대체
+        this.showToast('🔍 사진 누락 확인 중...');
         
         try {
             // 1. 메타데이터 로드
@@ -4955,7 +4950,6 @@ class DxfPhotoEditor {
             const metadata = await window.driveManager.loadMetadata(window.currentDriveFile.name);
             
             if (!metadata || !metadata.photos || metadata.photos.length === 0) {
-                this.showLoading(false);
                 this.showToast('ℹ️ 저장된 사진이 없습니다');
                 return;
             }
@@ -4970,8 +4964,6 @@ class DxfPhotoEditor {
             const missingPhotos = metadata.photos.filter(photo => {
                 return photo.fileName && !fileNames.has(photo.fileName);
             });
-            
-            this.showLoading(false);
             
             // 4. 결과 표시
             if (missingPhotos.length === 0) {
