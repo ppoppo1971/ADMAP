@@ -730,6 +730,20 @@ window.initGoogleDrive = async function() {
                             const photoFileName = photo.fileName;
                             
                             console.log(`   [${i + 1}/${appData.photos.length}] ${photoFileName} 업로드 중...`);
+                            
+                            // 이미지 데이터 유효성 검증
+                            if (!photo.imageData || typeof photo.imageData !== 'string') {
+                                throw new Error('이미지 데이터가 유효하지 않습니다');
+                            }
+                            
+                            if (photo.imageData.length === 0) {
+                                throw new Error('이미지 데이터가 비어있습니다');
+                            }
+                            
+                            if (!photo.imageData.startsWith('data:image/')) {
+                                throw new Error('잘못된 이미지 데이터 형식입니다');
+                            }
+                            
                             await window.driveManager.uploadImage(photoFileName, photo.imageData);
                             console.log(`   ✅ ${photoFileName} 업로드 완료`);
                             photo.fileName = photoFileName;

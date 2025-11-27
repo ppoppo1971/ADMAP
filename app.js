@@ -3601,6 +3601,17 @@ class DxfPhotoEditor {
                 this.debugLog('   ✓ 원본 사용 (압축 없음, 크기:', (compressedImageData.length / 1024).toFixed(2), 'KB)');
             } else {
                 compressedImageData = await this.compressImage(image, file.name, targetSize);
+                
+                // 압축된 데이터 유효성 검증
+                if (!compressedImageData || compressedImageData.length === 0) {
+                    throw new Error('이미지 압축 실패: 압축된 데이터가 비어있습니다');
+                }
+                
+                // Data URL 형식 검증
+                if (!compressedImageData.startsWith('data:image/')) {
+                    throw new Error('이미지 압축 실패: 잘못된 데이터 형식입니다');
+                }
+                
                 this.debugLog('   ✓ 이미지 압축 완료 (압축 크기:', (compressedImageData.length / 1024).toFixed(2), 'KB)');
             }
             
@@ -3714,187 +3725,171 @@ class DxfPhotoEditor {
      * @returns {Promise<string>} 압축된 이미지 Data URL
      */
     async compressImage(image, fileName, targetSize) {
-        return new Promise((resolve, reject) => {
-            const canvas = document.createElement('canvas');
-            const ctx = canvas.getContext('2d');
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        
+        try {
+            // 목표 용량에 따라 초기 리사이즈 크기 결정 (압축 반복 감소)
+            // 작은 목표 용량일수록 더 작게 리사이즈하여 품질 조절 반복을 줄임
+            let maxDimension;
+            if (targetSize <= 500 * 1024) {
+                // 500KB 이하: 800px (더 작게 리사이즈하여 압축 반복 감소)
+                maxDimension = 800;
+            } else if (targetSize <= 1024 * 1024) {
+                // 1MB 이하: 1200px (기존 크기)
+                maxDimension = 1200;
+            } else if (targetSize <= 2 * 1024 * 1024) {
+                // 2MB 이하: 1600px (더 큰 크기 허용)
+                maxDimension = 1600;
+            } else {
+                // 2MB 초과: 2000px (매우 큰 크기 허용)
+                maxDimension = 2000;
+            }
             
-            try {
-                // 목표 용량에 따라 초기 리사이즈 크기 결정 (압축 반복 감소)
-                // 작은 목표 용량일수록 더 작게 리사이즈하여 품질 조절 반복을 줄임
-                let maxDimension;
-                if (targetSize <= 500 * 1024) {
-                    // 500KB 이하: 800px (더 작게 리사이즈하여 압축 반복 감소)
-                    maxDimension = 800;
-                } else if (targetSize <= 1024 * 1024) {
-                    // 1MB 이하: 1200px (기존 크기)
-                    maxDimension = 1200;
-                } else if (targetSize <= 2 * 1024 * 1024) {
-                    // 2MB 이하: 1600px (더 큰 크기 허용)
-                    maxDimension = 1600;
+            let width = image.width;
+            let height = image.height;
+            
+            // 비율 유지하며 축소
+            if (width > maxDimension || height > maxDimension) {
+                if (width > height) {
+                    height = Math.floor((height / width) * maxDimension);
+                    width = maxDimension;
                 } else {
-                    // 2MB 초과: 2000px (매우 큰 크기 허용)
-                    maxDimension = 2000;
+                    width = Math.floor((width / height) * maxDimension);
+                    height = maxDimension;
+                }
+            }
+            
+            canvas.width = width;
+            canvas.height = height;
+            
+            this.debugLog('   압축 캔버스 크기:', width, 'x', height);
+            
+            // 이미지 그리기
+            ctx.drawImage(image, 0, 0, width, height);
+            
+            // 목표 용량에 맞는 품질을 더 정확하게 추정
+            // 개선된 공식: 더 정확한 품질 예측 (제안 사항 반영)
+            const pixelCount = width * height;
+            const targetBytes = targetSize;
+            
+            // 실제 Blob 크기를 정확히 측정하기 위한 헬퍼 함수
+            // Base64 DataURL을 Blob으로 변환하여 정확한 바이너리 크기 측정
+            const getActualBlobSize = async (dataUrl) => {
+                try {
+                    const response = await fetch(dataUrl);
+                    const blob = await response.blob();
+                    return blob.size; // 실제 바이너리 크기
+                } catch (error) {
+                    // 오류 시 근사치 사용 (Base64 변환)
+                    const dataUrlPrefixLength = 23;
+                    const base64Length = Math.max(0, dataUrl.length - dataUrlPrefixLength);
+                    return Math.floor(base64Length * 0.75);
+                }
+            };
+            
+            // 품질 추정 공식 개선 - 2.5배 효과 반영
+            // 실제 저장되는 크기가 목표의 약 40%이므로, 목표 용량을 2.5배로 상향 조정하여 추정
+            const adjustedTargetSize = targetSize * 2.5; // 2.5배 상향 조정
+            
+            // 품질 추정 공식 (계수 0.25 사용 - 더 높은 품질로 추정)
+            let estimatedQuality = Math.pow(adjustedTargetSize / (pixelCount * 0.25), 1/1.6);
+            estimatedQuality = Math.max(0.4, Math.min(0.95, estimatedQuality)); // 0.4 ~ 0.95 범위
+            
+            // 목표 용량에 따른 추가 조정 (2.5배 효과 보완)
+            if (targetSize <= 500 * 1024) {
+                estimatedQuality *= 1.2; // 500KB는 품질을 더 높임
+            } else if (targetSize <= 1024 * 1024) {
+                estimatedQuality *= 1.15; // 1MB는 품질을 높임
+            } else {
+                estimatedQuality *= 1.1; // 2MB 이상은 품질을 약간 높임
+            }
+            estimatedQuality = Math.max(0.4, Math.min(0.95, estimatedQuality));
+            
+            this.debugLog(`   추정 품질: ${estimatedQuality.toFixed(2)} (목표: ${(targetSize / 1024).toFixed(0)}KB, 조정된 목표: ${(adjustedTargetSize / 1024).toFixed(0)}KB)`);
+            
+            // 첫 압축 - 실제 Blob 크기로 정확히 측정
+            let quality = estimatedQuality;
+            let compressedData = canvas.toDataURL('image/jpeg', quality);
+            let compressedSize = await getActualBlobSize(compressedData); // 실제 Blob 크기 측정
+            
+            this.debugLog(`   첫 압축 (품질 ${quality.toFixed(2)}): ${(compressedSize / 1024).toFixed(2)}KB (목표: ${(targetSize / 1024).toFixed(0)}KB)`);
+            
+            // 이진 탐색 방식으로 품질 조정 (최대 2번 반복으로 속도 최적화)
+            const tolerance = 0.12; // 목표 크기의 12% 오차 허용 (속도와 정확도 균형)
+            let minQuality = 0.3;
+            let maxQuality = 0.95;
+            let iterations = 0;
+            const maxIterations = 2; // 최대 2번 반복 (속도 최적화)
+            
+            while (iterations < maxIterations) {
+                const diff = compressedSize - targetSize;
+                const diffRatio = Math.abs(diff) / targetSize;
+                
+                // 목표 범위 내에 있으면 종료
+                if (diffRatio <= tolerance) {
+                    break;
                 }
                 
-                let width = image.width;
-                let height = image.height;
+                iterations++;
                 
-                // 비율 유지하며 축소
-                if (width > maxDimension || height > maxDimension) {
-                    if (width > height) {
-                        height = Math.floor((height / width) * maxDimension);
-                        width = maxDimension;
-                    } else {
-                        width = Math.floor((width / height) * maxDimension);
-                        height = maxDimension;
-                    }
+                if (compressedSize > targetSize) {
+                    // 목표보다 크면 품질 낮춤
+                    maxQuality = quality;
+                    quality = (minQuality + quality) / 2;
+                } else {
+                    // 목표보다 작으면 품질 높임
+                    minQuality = quality;
+                    quality = (quality + maxQuality) / 2;
                 }
                 
+                quality = Math.max(0.3, Math.min(0.95, quality));
+                compressedData = canvas.toDataURL('image/jpeg', quality);
+                compressedSize = await getActualBlobSize(compressedData); // 실제 Blob 크기 측정
+                
+                this.debugLog(`   조정 ${iterations} (품질 ${quality.toFixed(2)}): ${(compressedSize / 1024).toFixed(2)}KB`);
+            }
+            
+            // 여전히 목표보다 작으면 이미지 크기를 추가로 확대 (목표 용량 달성을 위해)
+            if (compressedSize < targetSize * 0.7) {
+                this.debugLog('   ⚠️ 품질 조정만으로 부족 - 이미지 크기 추가 확대');
+                // 목표 크기에 맞추기 위해 정확한 비율 계산
+                const scaleFactor = Math.sqrt(targetSize / compressedSize) * 1.05;
+                width = Math.floor(width * scaleFactor);
+                height = Math.floor(height * scaleFactor);
                 canvas.width = width;
                 canvas.height = height;
-                
-                this.debugLog('   압축 캔버스 크기:', width, 'x', height);
-                
-                // 이미지 그리기
+                ctx.clearRect(0, 0, width, height);
                 ctx.drawImage(image, 0, 0, width, height);
                 
-                // 목표 용량에 맞는 품질을 더 정확하게 추정
-                // 개선된 공식: 더 정확한 품질 예측 (제안 사항 반영)
-                const pixelCount = width * height;
-                const targetBytes = targetSize;
-                
-                // 실제 Blob 크기를 정확히 측정하기 위한 헬퍼 함수
-                // Base64 DataURL을 Blob으로 변환하여 정확한 바이너리 크기 측정
-                const getActualBlobSize = async (dataUrl) => {
-                    try {
-                        const response = await fetch(dataUrl);
-                        const blob = await response.blob();
-                        return blob.size; // 실제 바이너리 크기
-                    } catch (error) {
-                        // 오류 시 근사치 사용 (Base64 변환)
-                        const dataUrlPrefixLength = 23;
-                        const base64Length = Math.max(0, dataUrl.length - dataUrlPrefixLength);
-                        return Math.floor(base64Length * 0.75);
-                    }
-                };
-                
-                // Base64 DataURL 크기를 근사치로 변환 (빠른 추정용)
-                const dataUrlPrefixLength = 23; // "data:image/jpeg;base64," 길이
-                const estimateBlobSize = (dataUrlLength) => {
-                    const base64Length = Math.max(0, dataUrlLength - dataUrlPrefixLength);
-                    return Math.floor(base64Length * 0.75); // Base64는 4바이트당 3바이트
-                };
-                
-                // 품질 추정 공식 개선 - 2.5배 효과 반영
-                // 실제 저장되는 크기가 목표의 약 40%이므로, 목표 용량을 2.5배로 상향 조정하여 추정
-                const adjustedTargetSize = targetSize * 2.5; // 2.5배 상향 조정
-                
-                // 품질 추정 공식 (계수 0.25 사용 - 더 높은 품질로 추정)
-                let estimatedQuality = Math.pow(adjustedTargetSize / (pixelCount * 0.25), 1/1.6);
-                estimatedQuality = Math.max(0.4, Math.min(0.95, estimatedQuality)); // 0.4 ~ 0.95 범위
-                
-                // 목표 용량에 따른 추가 조정 (2.5배 효과 보완)
-                if (targetSize <= 500 * 1024) {
-                    estimatedQuality *= 1.2; // 500KB는 품질을 더 높임
-                } else if (targetSize <= 1024 * 1024) {
-                    estimatedQuality *= 1.15; // 1MB는 품질을 높임
-                } else {
-                    estimatedQuality *= 1.1; // 2MB 이상은 품질을 약간 높임
-                }
-                estimatedQuality = Math.max(0.4, Math.min(0.95, estimatedQuality));
-                
-                this.debugLog(`   추정 품질: ${estimatedQuality.toFixed(2)} (목표: ${(targetSize / 1024).toFixed(0)}KB, 조정된 목표: ${(adjustedTargetSize / 1024).toFixed(0)}KB)`);
-                
-                // async IIFE로 실제 Blob 크기 측정 수행
-                (async () => {
-                    try {
-                        // 첫 압축 - 실제 Blob 크기로 정확히 측정
-                        let quality = estimatedQuality;
-                        let compressedData = canvas.toDataURL('image/jpeg', quality);
-                        let compressedSize = await getActualBlobSize(compressedData); // 실제 Blob 크기 측정
-                        
-                        this.debugLog(`   첫 압축 (품질 ${quality.toFixed(2)}): ${(compressedSize / 1024).toFixed(2)}KB (목표: ${(targetSize / 1024).toFixed(0)}KB)`);
-                        
-                        // 이진 탐색 방식으로 품질 조정 (최대 2번 반복으로 속도 최적화)
-                        const tolerance = 0.12; // 목표 크기의 12% 오차 허용 (속도와 정확도 균형)
-                        let minQuality = 0.3;
-                        let maxQuality = 0.95;
-                        let iterations = 0;
-                        const maxIterations = 2; // 최대 2번 반복 (속도 최적화)
-                        
-                        while (iterations < maxIterations) {
-                            const diff = compressedSize - targetSize;
-                            const diffRatio = Math.abs(diff) / targetSize;
-                            
-                            // 목표 범위 내에 있으면 종료
-                            if (diffRatio <= tolerance) {
-                                break;
-                            }
-                            
-                            iterations++;
-                            
-                            if (compressedSize > targetSize) {
-                                // 목표보다 크면 품질 낮춤
-                                maxQuality = quality;
-                                quality = (minQuality + quality) / 2;
-                            } else {
-                                // 목표보다 작으면 품질 높임
-                                minQuality = quality;
-                                quality = (quality + maxQuality) / 2;
-                            }
-                            
-                            quality = Math.max(0.3, Math.min(0.95, quality));
-                            compressedData = canvas.toDataURL('image/jpeg', quality);
-                            compressedSize = await getActualBlobSize(compressedData); // 실제 Blob 크기 측정
-                            
-                            this.debugLog(`   조정 ${iterations} (품질 ${quality.toFixed(2)}): ${(compressedSize / 1024).toFixed(2)}KB`);
-                        }
-                        
-                        // 여전히 목표보다 작으면 이미지 크기를 추가로 확대 (목표 용량 달성을 위해)
-                        if (compressedSize < targetSize * 0.7) {
-                            this.debugLog('   ⚠️ 품질 조정만으로 부족 - 이미지 크기 추가 확대');
-                            // 목표 크기에 맞추기 위해 정확한 비율 계산
-                            const scaleFactor = Math.sqrt(targetSize / compressedSize) * 1.05;
-                            width = Math.floor(width * scaleFactor);
-                            height = Math.floor(height * scaleFactor);
-                            canvas.width = width;
-                            canvas.height = height;
-                            ctx.clearRect(0, 0, width, height);
-                            ctx.drawImage(image, 0, 0, width, height);
-                            
-                            // 확대 후 품질 재추정 (2.5배 효과 반영)
-                            const newPixelCount = width * height;
-                            const newAdjustedTargetSize = targetSize * 2.5;
-                            quality = Math.pow(newAdjustedTargetSize / (newPixelCount * 0.25), 1/1.6);
-                            quality = Math.max(0.4, Math.min(0.9, quality));
-                            compressedData = canvas.toDataURL('image/jpeg', quality);
-                            compressedSize = await getActualBlobSize(compressedData);
-                            this.debugLog(`   크기 확대 후 압축 (품질 ${quality.toFixed(2)}): ${(compressedSize / 1024).toFixed(2)}KB`);
-                        }
-                        
-                        // 최종 크기 확인 (실제 Blob 크기)
-                        const finalSizeKB = (compressedSize / 1024).toFixed(2);
-                        const targetSizeKB = (targetSize / 1024).toFixed(2);
-                        const diffRatio = Math.abs(compressedSize - targetSize) / targetSize;
-                        const accuracy = ((1 - diffRatio) * 100).toFixed(1);
-                        this.debugLog(`   ✅ 최종 압축 완료: ${finalSizeKB}KB / 목표: ${targetSizeKB}KB (정확도: ${accuracy}%, 품질: ${quality.toFixed(2)})`);
-                        
-                        resolve(compressedData);
-                    } catch (error) {
-                        console.error('   ❌ 이미지 압축 오류:', error);
-                        reject(new Error('이미지 압축 실패: ' + error.message));
-                    }
-                })();
-            } catch (error) {
-                console.error('   ❌ 이미지 압축 오류:', error);
-                reject(new Error('이미지 압축 실패: ' + error.message));
-            } finally {
-                // Canvas 메모리 명시적 정리
-                ctx.clearRect(0, 0, canvas.width, canvas.height);
-                canvas.width = 0;
-                canvas.height = 0;
+                // 확대 후 품질 재추정 (2.5배 효과 반영)
+                const newPixelCount = width * height;
+                const newAdjustedTargetSize = targetSize * 2.5;
+                quality = Math.pow(newAdjustedTargetSize / (newPixelCount * 0.25), 1/1.6);
+                quality = Math.max(0.4, Math.min(0.9, quality));
+                compressedData = canvas.toDataURL('image/jpeg', quality);
+                compressedSize = await getActualBlobSize(compressedData);
+                this.debugLog(`   크기 확대 후 압축 (품질 ${quality.toFixed(2)}): ${(compressedSize / 1024).toFixed(2)}KB`);
             }
-        });
+            
+            // 최종 크기 확인 (실제 Blob 크기)
+            const finalSizeKB = (compressedSize / 1024).toFixed(2);
+            const targetSizeKB = (targetSize / 1024).toFixed(2);
+            const diffRatio = Math.abs(compressedSize - targetSize) / targetSize;
+            const accuracy = ((1 - diffRatio) * 100).toFixed(1);
+            this.debugLog(`   ✅ 최종 압축 완료: ${finalSizeKB}KB / 목표: ${targetSizeKB}KB (정확도: ${accuracy}%, 품질: ${quality.toFixed(2)})`);
+            
+            return compressedData;
+            
+        } catch (error) {
+            console.error('   ❌ 이미지 압축 오류:', error);
+            throw new Error('이미지 압축 실패: ' + error.message);
+        } finally {
+            // Canvas 메모리 명시적 정리
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            canvas.width = 0;
+            canvas.height = 0;
+        }
     }
     
     onMouseDown(e) {
