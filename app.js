@@ -3416,11 +3416,8 @@ class DxfPhotoEditor {
             this.drawTexts();
         }
         
-        // 현재 위치 마커 그리기 (DXF 도면 위)
-        if (hasCurrentLocation) {
-            this.debugLog('            현재 위치 마커 그리기 시작');
-            this.drawCurrentLocationMarker();
-        }
+        // 현재 위치 마커는 지도 위에만 표시 (핀 이모지)
+        // DXF 도면 위에는 원형 마커를 그리지 않음
         
         this.debugLog('         ✅ drawPhotosCanvas 완료');
     }
@@ -5916,13 +5913,14 @@ class DxfPhotoEditor {
         this.svg.style.background = '#e8e8e8';
         
         // 원본 ViewBox로 복원 (지도 모드가 아닐 때)
-        if (this.originalViewBox) {
+        // 단, 현재 위치가 표시되어 있으면 ViewBox를 유지 (화면 중심 유지)
+        if (this.originalViewBox && !this.currentLocationData) {
             this.viewBox = {...this.originalViewBox};
             this.updateViewBox();
         }
         
-        // 현재 위치 마커 제거
-        this.clearCurrentLocationMarker();
+        // 현재 위치 마커는 제거하지 않음 (DXF 도면 위에 표시되지 않지만 지도 위 마커는 유지)
+        // clearCurrentLocationMarker() 호출하지 않음
         
         console.log('✅ 지도 숨김');
         this.showToast('🗺️ 지도 숨김');
@@ -6116,8 +6114,9 @@ class DxfPhotoEditor {
                     this.updateViewBox();
                 }
                 
-                this.redraw(); // Canvas 다시 그리기 (현재 위치 마커 포함)
-                console.log('✅ 현재 위치 DXF 도면 위에 표시 완료 (화면 중심)');
+                // Canvas 다시 그리기 (원형 마커는 그리지 않음, 핀 이모지는 지도 위에만 표시)
+                this.redraw();
+                console.log('✅ 현재 위치 화면 중심으로 이동 완료');
             }
             
             console.log('✅ 현재 위치 표시 완료 (정확도: ' + accuracy.toFixed(0) + 'm)');
@@ -6155,16 +6154,14 @@ class DxfPhotoEditor {
                         // SVG 배경 복원
                         this.svg.style.background = '#e8e8e8';
                         
-                        // 원본 ViewBox로 복원 (지도 모드가 아닐 때)
-                        if (this.originalViewBox) {
-                            this.viewBox = {...this.originalViewBox};
-                            this.updateViewBox();
-                        }
+                        // 원본 ViewBox로 복원하지 않음 (현재 위치 중심 유지)
+                        // 현재 위치가 표시되어 있으면 ViewBox를 유지하여 화면 중심 유지
+                        // this.viewBox는 현재 위치 중심으로 이미 설정되어 있음
                         
-                        // 현재 위치 마커는 유지 (DXF 도면 위에 Canvas로 표시됨)
+                        // 현재 위치 마커는 유지 (지도 위 마커는 유지, DXF 도면 위에는 표시 안 함)
                         // clearCurrentLocationMarker() 호출하지 않음
                         
-                        console.log('✅ 지도 자동 비활성화 (현재 위치는 DXF 도면 위에 계속 표시됨)');
+                        console.log('✅ 지도 자동 비활성화 (현재 위치 중심 유지)');
                     }
                 }, 2000); // 2초 후 지도 숨김
             }
