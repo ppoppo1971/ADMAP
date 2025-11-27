@@ -162,6 +162,7 @@ class DxfPhotoEditor {
         this.autoSaveTimeout = null;
         this.autoSaveDelay = 3000; // 3초 대기
         this.isAutoSaving = false;
+        this.autoSavePending = false; // 저장 완료 후 재실행 플래그
         
         // ViewBox 업데이트 Throttle (60fps = 16ms)
         this.updateViewBoxThrottled = this.throttle(() => {
@@ -3650,10 +3651,16 @@ class DxfPhotoEditor {
             this.redraw();
             this.debugLog('   ✓ 화면 다시 그리기 완료');
             
-            // Google Drive 자동 저장 (사진 추가는 즉시 저장)
-            this.debugLog('7️⃣ 자동 저장 시작...');
+            // Google Drive 자동 저장 (비동기로 실행 - 저장 완료를 기다리지 않음)
+            // 사용자가 저장 완료를 기다리지 않고 연속으로 사진을 촬영할 수 있도록
+            this.debugLog('7️⃣ 자동 저장 시작 (비동기)...');
             this.showToast('☁️ 저장 중 (구글드라이브)');
-            await this.autoSave(true); // force=true: 즉시 저장
+            
+            // 비동기로 저장 실행 (await 제거)
+            this.autoSave(true).catch(error => {
+                console.error('❌ 자동 저장 오류 (비동기):', error);
+                // 오류 발생 시에도 사용자 작업은 계속 가능하도록
+            });
             
             // 동일 좌표에 추가된 경우 모달 다시 열기
             if (locationInfo && this.currentPhotoGroup.length > 0) {
@@ -4818,8 +4825,17 @@ class DxfPhotoEditor {
             return;
         }
         
-        // 이미 저장 중이면 스킵 (force가 아닐 때만)
-        if (this.isAutoSaving && !force) {
+        // 이미 저장 중이면 처리 방법:
+        // - force=false (일반 호출): 저장 완료 후 자동으로 다시 실행되도록 스킵
+        // - force=true (즉시 저장): 저장 중이어도 대기하고 실행 (중복 방지를 위해 스킵)
+        //   하지만 새로운 사진이 추가되었을 수 있으므로, 저장 완료 후 자동 재실행
+        if (this.isAutoSaving) {
+            if (force) {
+                // force=true인 경우, 저장 중이면 저장 완료 후 다시 저장하도록 예약
+                console.log('⏭️ 저장 중 - 저장 완료 후 자동 재실행 예약');
+                // 저장 완료 후 재실행은 finally 블록에서 처리
+                this.autoSavePending = true; // 저장 완료 후 재실행 플래그
+            }
             console.log('⏭️ 자동 저장 이미 진행 중, 건너뜀');
             return;
         }
@@ -4921,6 +4937,18 @@ class DxfPhotoEditor {
             this.showToast(`⚠️ 저장 실패: ${error.message}`);
         } finally {
             this.isAutoSaving = false;
+            
+            // 저장 완료 후 대기 중인 사진이 있으면 자동으로 재실행
+            if (this.autoSavePending) {
+                console.log('🔄 대기 중인 사진 저장 시작...');
+                this.autoSavePending = false; // 플래그 초기화
+                // 약간의 지연 후 재실행 (메타데이터 업데이트 시간 확보)
+                setTimeout(() => {
+                    this.autoSave(true).catch(error => {
+                        console.error('❌ 자동 저장 재실행 오류:', error);
+                    });
+                }, 500);
+            }
         }
     }
     
