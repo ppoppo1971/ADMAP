@@ -494,15 +494,11 @@ class DxfPhotoEditor {
             console.log('🎯🎯 더블탭 감지! 줌 실행...');
             this.clearPendingSingleTap();
             
-            // 화면 중앙 좌표를 ViewBox 좌표로 변환
-            const rect = this.getCachedRect();
-            const centerScreenX = rect.left + rect.width / 2;
-            const centerScreenY = rect.top + rect.height / 2;
-            const centerX = ((centerScreenX - rect.left) / rect.width) * this.viewBox.width + this.viewBox.x;
-            const centerY = ((centerScreenY - rect.top) / rect.height) * this.viewBox.height + this.viewBox.y;
+            // 더블탭한 위치를 ViewBox 좌표로 변환 (screenToViewBox 사용으로 정확도 향상)
+            const tapCoords = this.screenToViewBox(clientX, clientY);
             
-            // 화면 중앙을 기준으로 5배 확대
-            this.zoomToPoint(centerX, centerY, 5.0);
+            // 더블탭한 위치가 화면 중앙에 오도록 하고, 그 위치를 기준으로 5배 확대
+            this.zoomToPoint(tapCoords.x, tapCoords.y, 5.0);
             
             // 더블탭 정보 초기화 (연속 더블탭 방지)
             this.lastTapTime = 0;
