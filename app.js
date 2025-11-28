@@ -467,8 +467,18 @@ class DxfPhotoEditor {
     
     /**
      * 더블탭 감지 및 줌 처리
+     * ⚠️ 핀치줌이나 드래그 중에는 더블탭 감지 비활성화
      */
     handleDoubleTap(clientX, clientY) {
+        // 핀치줌이나 드래그 중이면 더블탭 감지 비활성화
+        if (this.touchState.isPinching || this.touchState.wasPinching || 
+            this.touchState.isDragging || this.touchState.wasDragging) {
+            // 타이머 초기화하여 오인식 방지
+            this.lastTapTime = 0;
+            this.lastTapPosition = { x: 0, y: 0 };
+            return false;
+        }
+        
         const now = Date.now();
         const timeDiff = now - this.lastTapTime;
         
@@ -544,10 +554,11 @@ class DxfPhotoEditor {
             height: newHeight
         };
         
-        // ViewBox 업데이트
-        this.updateViewBox();
-        
-        this.debugLog(`✅ 줌 완료!`);
+        // ViewBox 업데이트 (비동기로 처리하여 렌더링 블로킹 방지)
+        requestAnimationFrame(() => {
+            this.updateViewBox();
+            this.debugLog(`✅ 줌 완료!`);
+        });
     }
     
     init() {
@@ -3886,6 +3897,10 @@ class DxfPhotoEditor {
             this.touchState.isPinching = true;
             this.touchState.anchorView = null;
             
+            // 더블탭 타이머 초기화 (핀치줌 시작 시 더블탭 오인식 방지)
+            this.lastTapTime = 0;
+            this.lastTapPosition = { x: 0, y: 0 };
+            
             // 두 손가락 사이 거리 계산
             const touch1 = touches[0];
             const touch2 = touches[1];
@@ -4028,11 +4043,13 @@ class DxfPhotoEditor {
             
             // 사진 클릭 또는 더블탭 감지
             // 핀치줌이나 드래그가 있었으면 탭으로 처리하지 않음
+            // 핀치줌 종료 직후에는 더블탭 감지 비활성화 (오인식 방지)
             if (!this.longPressTriggered && 
                 !this.touchState.wasDragging && 
                 !this.touchState.wasPinching && 
                 !this.touchState.isPinching &&
-                e.changedTouches.length > 0) {
+                e.changedTouches.length > 0 &&
+                e.changedTouches.length === 1) { // 단일 터치만 처리 (핀치줌 종료 시 두 손가락이 동시에 떼어지는 경우 방지)
                 const touch = e.changedTouches[0];
                 const isTap = this.isTapGesture(touch);
                 
@@ -4082,9 +4099,12 @@ class DxfPhotoEditor {
             const wasPinching = this.touchState.isPinching;
             if (wasPinching) {
                 this.touchState.wasPinching = true;
+                // 더블탭 타이머 초기화 (핀치줌 종료 후 더블탭 오인식 방지)
+                this.lastTapTime = 0;
+                this.lastTapPosition = { x: 0, y: 0 };
                 setTimeout(() => {
                     this.touchState.wasPinching = false;
-                }, 100);
+                }, 300); // 300ms로 증가 (더블탭 감지 시간과 동일하게)
             }
             
             // 드래그나 핀치줌이 끝났을 때 지도 동기화 (지도 모드일 때만)
@@ -4115,9 +4135,12 @@ class DxfPhotoEditor {
             const wasPinching = this.touchState.isPinching;
             if (wasPinching) {
                 this.touchState.wasPinching = true;
+                // 더블탭 타이머 초기화 (핀치줌 종료 후 더블탭 오인식 방지)
+                this.lastTapTime = 0;
+                this.lastTapPosition = { x: 0, y: 0 };
                 setTimeout(() => {
                     this.touchState.wasPinching = false;
-                }, 100);
+                }, 300); // 300ms로 증가 (더블탭 감지 시간과 동일하게)
                 
                 // 핀치줌 종료 시 지도 동기화 (지도 모드일 때만)
                 if (this.isMapMode && this.map && !this.syncingFromMap && this.dxfBoundsWGS84) {
