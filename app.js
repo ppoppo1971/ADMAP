@@ -2774,23 +2774,41 @@ class DxfPhotoEditor {
         // 핀치줌 중인지 확인
         const isPinching = this.touchState.isPinching;
         
-        requestAnimationFrame(() => {
-            this.updatePending = false;
-            
-            // SVG ViewBox만 업데이트 (SVG는 자동으로 재렌더링됨)
-            this.svg.setAttribute('viewBox', 
-                `${this.viewBox.x} ${this.viewBox.y} ${this.viewBox.width} ${this.viewBox.height}`);
-            
-            // 핀치줌 중에는 사진 그리기를 더 낮은 프레임레이트로 제한 (성능 최적화)
-            // 핀치줌이 끝나면 즉시 다시 그리기
-            if (!isPinching || !this._lastPhotoDrawTime || (Date.now() - this._lastPhotoDrawTime) > 100) {
+        // 핀치줌 중에는 ViewBox 업데이트를 더 제한적으로 (성능 최적화)
+        if (isPinching) {
+            // 핀치줌 중에는 ViewBox 업데이트를 더 낮은 프레임레이트로 제한 (약 30fps = 33ms)
+            // 복잡한 DXF 렌더링 시 성능 개선
+            if (!this._lastViewBoxUpdateTime || (Date.now() - this._lastViewBoxUpdateTime) >= 33) {
+                requestAnimationFrame(() => {
+                    this.updatePending = false;
+                    this._lastViewBoxUpdateTime = Date.now();
+                    
+                    // SVG ViewBox만 업데이트 (SVG는 자동으로 재렌더링됨)
+                    this.svg.setAttribute('viewBox', 
+                        `${this.viewBox.x} ${this.viewBox.y} ${this.viewBox.width} ${this.viewBox.height}`);
+                    
+                    // 핀치줌 중에는 사진 그리기 완전 스킵 (성능 최적화)
+                    // 핀치줌 종료 시 다시 그리기
+                });
+            } else {
+                // 너무 빈번한 업데이트는 스킵
+                this.updatePending = false;
+            }
+        } else {
+            // 일반 상태: 정상 업데이트
+            requestAnimationFrame(() => {
+                this.updatePending = false;
+                
+                // SVG ViewBox만 업데이트 (SVG는 자동으로 재렌더링됨)
+                this.svg.setAttribute('viewBox', 
+                    `${this.viewBox.x} ${this.viewBox.y} ${this.viewBox.width} ${this.viewBox.height}`);
+                
                 // Canvas 사진만 다시 그리기 (빠름)
                 this.drawPhotosCanvas();
-                this._lastPhotoDrawTime = Date.now();
-            }
-            
-            // 지도 동기화는 드래그/줌 종료 시점에만 수행 (성능 최적화)
-        });
+                
+                // 지도 동기화는 드래그/줌 종료 시점에만 수행 (성능 최적화)
+            });
+        }
     }
     
     /**
@@ -3910,6 +3928,9 @@ class DxfPhotoEditor {
             this.lastTapTime = 0;
             this.lastTapPosition = { x: 0, y: 0 };
             
+            // 핀치줌 시작 시 rect를 한 번만 가져와서 캐시 (핀치줌 중 재사용)
+            this.getCachedRect();
+            
             // 두 손가락 사이 거리 계산
             const touch1 = touches[0];
             const touch2 = touches[1];
@@ -3991,7 +4012,8 @@ class DxfPhotoEditor {
                 }
                 
                 // 중심점을 ViewBox 좌표로 변환
-                const rect = this.getCachedRect();
+                // 핀치줌 중에는 캐시된 rect 재사용 (getCachedRect는 캐시가 있으면 재사용)
+                const rect = this.cachedRect || this.getCachedRect();
                 const centerX = ((centerScreenX - rect.left) / rect.width) * this.viewBox.width + this.viewBox.x;
                 const centerY = ((centerScreenY - rect.top) / rect.height) * this.viewBox.height + this.viewBox.y;
                 
