@@ -525,8 +525,8 @@ class DxfPhotoEditor {
         this.debugLog(`   현재 ViewBox: x=${this.viewBox.x.toFixed(1)}, y=${this.viewBox.y.toFixed(1)}, w=${this.viewBox.width.toFixed(1)}, h=${this.viewBox.height.toFixed(1)}`);
         
         // 새로운 ViewBox 크기
-        const newWidth = this.viewBox.width / zoomFactor;
-        const newHeight = this.viewBox.height / zoomFactor;
+        let newWidth = this.viewBox.width / zoomFactor;
+        let newHeight = this.viewBox.height / zoomFactor;
         
         this.debugLog(`   새 크기: w=${newWidth.toFixed(1)}, h=${newHeight.toFixed(1)} (${zoomFactor}배)`);
         
@@ -534,9 +534,16 @@ class DxfPhotoEditor {
         const minSize = (this.originalViewBox?.width || 1000) * 0.01;
         const maxSize = (this.originalViewBox?.width || 1000) * 10;
         
-        if (newWidth < minSize || newWidth > maxSize) {
-            console.log('⚠️ 줌 제한 초과');
-            return;
+        // 마지막 단계에서 한계를 "건너뛰지" 않도록
+        // 범위를 벗어나려 할 때는 취소 대신 경계값으로 강제 클램프
+        if (newWidth < minSize) {
+            const ratio = minSize / newWidth;
+            newWidth = minSize;
+            newHeight *= ratio;
+        } else if (newWidth > maxSize) {
+            const ratio = maxSize / newWidth;
+            newWidth = maxSize;
+            newHeight *= ratio;
         }
         
         // 타겟 포인트가 화면 중심에 오도록 ViewBox 조정
@@ -2786,9 +2793,8 @@ class DxfPhotoEditor {
                     this.svg.setAttribute('viewBox', 
                         `${this.viewBox.x} ${this.viewBox.y} ${this.viewBox.width} ${this.viewBox.height}`);
                     
-                    // 핀치줌 중에도 사진을 함께 렌더링 (도면과 동기화)
-                    // Canvas 원 그리기는 매우 가벼워서 성능 영향 미미
-                    this.drawPhotosCanvas();
+                    // 핀치줌 중에는 사진 그리기 완전 스킵 (성능 최적화)
+                    // 핀치줌 종료 시 다시 그리기
                 });
             } else {
                 // 너무 빈번한 업데이트는 스킵
@@ -4158,10 +4164,8 @@ class DxfPhotoEditor {
             this.touchState.startViewBox = null;
             
             // 핀치줌 종료 시 사진 다시 그리기 (최신 상태 반영)
-            // 주의: 핀치줌 중에도 이미 사진을 그리고 있으므로, 
-            // 종료 시에는 이미 최신 상태이지만 확실히 하기 위해 한 번 더 그리기
             if (wasPinchingBeforeReset) {
-                // 핀치줌 중에도 사진을 그렸으므로, 종료 시에는 최신 상태 확인만
+                this._lastPhotoDrawTime = 0; // 강제로 다시 그리기
                 requestAnimationFrame(() => {
                     this.drawPhotosCanvas();
                 });
@@ -4192,8 +4196,7 @@ class DxfPhotoEditor {
                 }
                 
                 // 핀치줌 종료 시 사진 다시 그리기 (최신 상태 반영)
-                // 주의: 핀치줌 중에도 이미 사진을 그리고 있으므로, 
-                // 종료 시에는 이미 최신 상태이지만 확실히 하기 위해 한 번 더 그리기
+                this._lastPhotoDrawTime = 0; // 강제로 다시 그리기
                 requestAnimationFrame(() => {
                     this.drawPhotosCanvas();
                 });
@@ -4252,15 +4255,23 @@ class DxfPhotoEditor {
         // 새로운 크기 계산
         // factor > 1: 확대 (viewBox 크기 감소) → viewBox.width / factor
         // factor < 1: 축소 (viewBox 크기 증가) → viewBox.width / factor
-        const newWidth = this.viewBox.width / factor;
-        const newHeight = this.viewBox.height / factor;
+        let newWidth = this.viewBox.width / factor;
+        let newHeight = this.viewBox.height / factor;
         
         // 최소/최대 크기 제한
         const minSize = (this.originalViewBox?.width || 1000) * 0.01; // 최대 100배 확대
         const maxSize = (this.originalViewBox?.width || 1000) * 10;   // 최대 10배 축소
         
-        if (newWidth < minSize || newWidth > maxSize) {
-            return; // 제한을 벗어나면 줌 취소
+        // 계단식 확대(버튼 등)에서 마지막 단계를 건너뛰지 않도록
+        // 범위를 벗어나려 할 때는 취소 대신 경계값으로 강제 클램프
+        if (newWidth < minSize) {
+            const ratio = minSize / newWidth;
+            newWidth = minSize;
+            newHeight *= ratio;
+        } else if (newWidth > maxSize) {
+            const ratio = maxSize / newWidth;
+            newWidth = maxSize;
+            newHeight *= ratio;
         }
         
         // 중심점의 상대 위치 계산 (0~1 사이 값)
