@@ -172,6 +172,9 @@ class DxfPhotoEditor {
         // 백그라운드 모드 최적화
         this.pauseAutoSave = false;
         this.setupVisibilityListener();
+
+        // 성능 분석용 타임 로그 초기화
+        this._lastLogTime = performance.now();
         
         this.init();
     }
@@ -181,6 +184,25 @@ class DxfPhotoEditor {
             return;
         }
         console.log(...args);
+    }
+
+    /**
+     * 성능 분석용 타임 로그
+     * - 주요 구간 사이 경과 시간을 console에 출력
+     */
+    logTime(label) {
+        try {
+            const now = performance.now();
+            if (typeof this._lastLogTime !== 'number') {
+                this._lastLogTime = now;
+            }
+            const diff = now - this._lastLogTime;
+            console.log(`⏱ [${label}] +${diff.toFixed(1)}ms (t=${now.toFixed(1)}ms)`);
+            this._lastLogTime = now;
+        } catch (e) {
+            // performance.now()가 없는 환경에서도 앱이 죽지 않도록 방어
+            console.log(`⏱ [${label}]`);
+        }
     }
     
     /**
@@ -2779,6 +2801,7 @@ class DxfPhotoEditor {
         
         // 핀치줌 중인지 확인
         const isPinching = this.touchState.isPinching;
+        this.logTime(`updateViewBox 진입 (isPinching=${isPinching})`);
         
         // 핀치줌 중에는 ViewBox 업데이트를 더 제한적으로 (성능 최적화)
         if (isPinching) {
@@ -2795,6 +2818,7 @@ class DxfPhotoEditor {
                     
                     // 핀치줌 중에는 사진 그리기 완전 스킵 (성능 최적화)
                     // 핀치줌 종료 시 다시 그리기
+                    this.logTime('updateViewBox (핀치) rAF 완료');
                 });
             } else {
                 // 너무 빈번한 업데이트는 스킵
@@ -2813,6 +2837,7 @@ class DxfPhotoEditor {
                 this.drawPhotosCanvas();
                 
                 // 지도 동기화는 드래그/줌 종료 시점에만 수행 (성능 최적화)
+                this.logTime('updateViewBox (일반) rAF + drawPhotosCanvas 완료');
             });
         }
     }
@@ -2867,6 +2892,7 @@ class DxfPhotoEditor {
     
     
     drawDxfSvg() {
+        this.logTime('drawDxfSvg 시작');
         // SVG 초기화
         while (this.svgGroup.firstChild) {
             this.svgGroup.removeChild(this.svgGroup.firstChild);
@@ -2906,6 +2932,7 @@ class DxfPhotoEditor {
         
         this.svgGroup.appendChild(fragment);
         this.debugLog(`SVG 렌더링 완료: ${drawnCount}개 성공, ${errorCount}개 실패`);
+        this.logTime('drawDxfSvg 끝');
     }
     
     createSvgElement(entity) {
@@ -3320,6 +3347,7 @@ class DxfPhotoEditor {
     }
     
     drawPhotosCanvas() {
+        this.logTime('drawPhotosCanvas 시작');
         this.debugLog('         🖼️ drawPhotosCanvas 시작');
         // Canvas 초기화 (투명) - 한 번에 처리
         this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
@@ -3328,6 +3356,7 @@ class DxfPhotoEditor {
         // 사진과 텍스트가 없으면 빠르게 리턴
         if (this.photos.length === 0 && this.texts.length === 0) {
             this.debugLog('            사진/텍스트 없음 - 건너뜀');
+            this.logTime('drawPhotosCanvas 종료 (사진/텍스트 없음)');
             return;
         }
         
@@ -3340,6 +3369,7 @@ class DxfPhotoEditor {
         this.drawTexts();
         
         this.debugLog('         ✅ drawPhotosCanvas 완료');
+        this.logTime('drawPhotosCanvas 종료');
     }
     
     /**
@@ -3900,6 +3930,8 @@ class DxfPhotoEditor {
     onTouchStart(e) {
         // 기본 브라우저 동작 방지 (페이지 확대/축소 방지)
         e.preventDefault();
+        console.log('👆 onTouchStart, touches=', e.touches.length);
+        this.logTime('onTouchStart 진입');
         this.lastTouchTime = Date.now();
         this.longPressTriggered = false;
         this.clearPendingSingleTap();
@@ -3953,8 +3985,8 @@ class DxfPhotoEditor {
     onTouchMove(e) {
         // 항상 기본 동작 방지
         e.preventDefault();
-        
         const touches = e.touches;
+        this.logTime(`onTouchMove (touches=${touches.length}, isPinching=${this.touchState.isPinching})`);
         
         if (touches.length === 1 && !this.touchState.isPinching) {
             const touch = touches[0];
@@ -4058,6 +4090,7 @@ class DxfPhotoEditor {
      */
     onTouchEnd(e) {
         e.preventDefault();
+        this.logTime('onTouchEnd 진입');
         
         const touches = e.touches;
         
@@ -4209,6 +4242,8 @@ class DxfPhotoEditor {
             this.touchState.startY = touch.clientY;
             this.touchState.lastTouch = { x: touch.clientX, y: touch.clientY };
         }
+
+        this.logTime('onTouchEnd 종료');
     }
     
     /**
@@ -4797,6 +4832,7 @@ class DxfPhotoEditor {
      * await this.autoSave(true); // 즉시 저장 (백그라운드에서도 계속 진행)
      */
     async autoSave(force = false) {
+        this.logTime(`autoSave 호출 (force=${force})`);
         // ⚠️ 중요: force=true일 때는 백그라운드 모드와 관계없이 저장 실행
         // 사용자 작업(사진 촬영, 텍스트 입력) 내용이 손실되지 않도록 보장
         // force=false일 때만 백그라운드 모드에서 일시 정지
@@ -4836,6 +4872,7 @@ class DxfPhotoEditor {
         }
         
         // Google Drive에 데이터 저장
+        this.logTime('autoSave 실제 저장 시작 직전');
         console.log('💾 자동 저장 실행 (debounce 완료)...');
         console.log('   saveToDrive 함수:', typeof window.saveToDrive);
         console.log('   currentDriveFile:', window.currentDriveFile);
@@ -4934,6 +4971,7 @@ class DxfPhotoEditor {
                     });
                 }, 500);
             }
+            this.logTime('autoSave 종료');
         }
     }
     
