@@ -2786,8 +2786,9 @@ class DxfPhotoEditor {
                     this.svg.setAttribute('viewBox', 
                         `${this.viewBox.x} ${this.viewBox.y} ${this.viewBox.width} ${this.viewBox.height}`);
                     
-                    // 핀치줌 중에는 사진 그리기 완전 스킵 (성능 최적화)
-                    // 핀치줌 종료 시 다시 그리기
+                    // 핀치줌 중에도 사진을 함께 렌더링 (도면과 동기화)
+                    // Canvas 원 그리기는 매우 가벼워서 성능 영향 미미
+                    this.drawPhotosCanvas();
                 });
             } else {
                 // 너무 빈번한 업데이트는 스킵
@@ -4157,8 +4158,10 @@ class DxfPhotoEditor {
             this.touchState.startViewBox = null;
             
             // 핀치줌 종료 시 사진 다시 그리기 (최신 상태 반영)
+            // 주의: 핀치줌 중에도 이미 사진을 그리고 있으므로, 
+            // 종료 시에는 이미 최신 상태이지만 확실히 하기 위해 한 번 더 그리기
             if (wasPinchingBeforeReset) {
-                this._lastPhotoDrawTime = 0; // 강제로 다시 그리기
+                // 핀치줌 중에도 사진을 그렸으므로, 종료 시에는 최신 상태 확인만
                 requestAnimationFrame(() => {
                     this.drawPhotosCanvas();
                 });
@@ -4189,7 +4192,8 @@ class DxfPhotoEditor {
                 }
                 
                 // 핀치줌 종료 시 사진 다시 그리기 (최신 상태 반영)
-                this._lastPhotoDrawTime = 0; // 강제로 다시 그리기
+                // 주의: 핀치줌 중에도 이미 사진을 그리고 있으므로, 
+                // 종료 시에는 이미 최신 상태이지만 확실히 하기 위해 한 번 더 그리기
                 requestAnimationFrame(() => {
                     this.drawPhotosCanvas();
                 });
