@@ -153,7 +153,7 @@ class DxfPhotoEditor {
         // getBoundingClientRect() 캐싱 (성능 최적화)
         this.cachedRect = null;
         this.rectCacheTime = 0;
-        this.rectCacheDuration = 250; // 250ms 동안 캐시 유지 (100ms → 250ms로 연장, 10-20% 성능 향상)
+        this.rectCacheDuration = 100; // 100ms 동안 캐시 유지
         
         // 드래그 감도 설정 (1.0 = 손가락 이동과 동일)
         this.panSensitivity = 1.0;
@@ -163,9 +163,6 @@ class DxfPhotoEditor {
         this.autoSaveDelay = 3000; // 3초 대기
         this.isAutoSaving = false;
         this.autoSavePending = false; // 저장 완료 후 재실행 플래그
-        
-        // 지도 동기화 Debounce 관련 (성능 최적화)
-        this.mapSyncTimeout = null;
         
         // ViewBox 업데이트 Throttle (60fps = 16ms)
         this.updateViewBoxThrottled = this.throttle(() => {
@@ -389,13 +386,32 @@ class DxfPhotoEditor {
         
         const rect = this.getCachedRect();
         
+        try {
+            if (this.svg.createSVGPoint && typeof this.svg.getScreenCTM === 'function') {
+                const point = this.svg.createSVGPoint();
+                point.x = x;
+                point.y = y;
+                
+                const ctm = this.svg.getScreenCTM();
+                if (ctm && typeof ctm === 'object') {
+                    const screenPoint = point.matrixTransform(ctm);
+                    if (rect) {
+                        return {
+                            x: screenPoint.x - rect.left,
+                            y: screenPoint.y - rect.top
+                        };
+                    }
+                    return { x: screenPoint.x, y: screenPoint.y };
+                }
+            }
+        } catch (error) {
+            console.warn('viewToCanvasCoords 변환 실패, 폴백 사용:', error);
+        }
+
         if (!rect) {
             return { x: 0, y: 0 };
         }
 
-        // 성능 최적화: getScreenCTM() 제거 (레이아웃 재계산 방지)
-        // viewBox 변환은 선형 변환이므로 단순 비율 계산으로 정확히 표현 가능
-        // 폴백 방식만 사용하여 성능 50-90% 개선
         const normX = ((x - this.viewBox.x) / this.viewBox.width) * rect.width;
         const normY = ((y - this.viewBox.y) / this.viewBox.height) * rect.height;
         return { x: normX, y: normY };
@@ -508,24 +524,17 @@ class DxfPhotoEditor {
         this.debugLog(`   타겟: (${targetX.toFixed(1)}, ${targetY.toFixed(1)})`);
         this.debugLog(`   현재 ViewBox: x=${this.viewBox.x.toFixed(1)}, y=${this.viewBox.y.toFixed(1)}, w=${this.viewBox.width.toFixed(1)}, h=${this.viewBox.height.toFixed(1)}`);
         
+        // 새로운 ViewBox 크기
+        const newWidth = this.viewBox.width / zoomFactor;
+        const newHeight = this.viewBox.height / zoomFactor;
+        
+        this.debugLog(`   새 크기: w=${newWidth.toFixed(1)}, h=${newHeight.toFixed(1)} (${zoomFactor}배)`);
+        
         // 최소/최대 크기 제한
         const minSize = (this.originalViewBox?.width || 1000) * 0.01;
         const maxSize = (this.originalViewBox?.width || 1000) * 10;
         
-        // minSize까지 필요한 배율 계산 (최대 확대까지 도달 가능하도록)
-        const requiredFactor = this.viewBox.width / minSize;
-        
-        // 요청된 배율과 필요한 배율 중 작은 값 사용
-        // 이렇게 하면 마지막 단계에서 필요한 만큼만 확대하여 minSize에 정확히 도달
-        const actualFactor = Math.min(zoomFactor, requiredFactor);
-        
-        // 새로운 ViewBox 크기
-        const newWidth = this.viewBox.width / actualFactor;
-        const newHeight = this.viewBox.height / actualFactor;
-        
-        this.debugLog(`   새 크기: w=${newWidth.toFixed(1)}, h=${newHeight.toFixed(1)} (${actualFactor.toFixed(2)}배, 요청: ${zoomFactor}배)`);
-        
-        if (newWidth <= minSize || newWidth > maxSize) {
+        if (newWidth < minSize || newWidth > maxSize) {
             console.log('⚠️ 줌 제한 초과');
             return;
         }
@@ -3334,28 +3343,25 @@ class DxfPhotoEditor {
         const rect = this.getCachedRect();
         const margin = 50; // 여유 공간 (텍스트 크기 고려)
         
-        // 성능 최적화: 필터링과 좌표 변환을 한 번에 처리하여 중복 계산 제거
-        // 동일한 좌표 변환을 2번 수행하던 것을 1번만 수행하도록 개선 (30-50% 성능 향상)
-        const textsToRender = [];
-        
-        this.texts.forEach(textObj => {
-            // ViewBox 좌표 → 스크린 좌표 변환 (1번만 수행)
+        // ViewBox 기반 필터링으로 화면에 보이는 텍스트만 선택
+        const visibleTexts = this.texts.filter(textObj => {
+            // ViewBox 좌표 → 스크린 좌표 변환
             const { x, y } = this.viewToCanvasCoords(textObj.x, textObj.y);
             
-            // 화면 내에 있는지 확인 (여유 공간 포함)
-            if (x >= -margin && 
-                x <= rect.width + margin && 
-                y >= -margin && 
-                y <= rect.height + margin) {
-                // 화면 내 텍스트만 배열에 추가 (좌표도 함께 저장)
-                textsToRender.push({ textObj, x, y });
-            }
+            // 화면 밖에 있는지 확인 (여유 공간 포함)
+            return x >= -margin && 
+                   x <= rect.width + margin && 
+                   y >= -margin && 
+                   y <= rect.height + margin;
         });
         
-        this.debugLog('               📝 drawTexts 실행 - 전체:', this.texts.length, '개, 화면 내:', textsToRender.length, '개');
+        this.debugLog('               📝 drawTexts 실행 - 전체:', this.texts.length, '개, 화면 내:', visibleTexts.length, '개');
         
-        // 화면에 보이는 텍스트만 렌더링 (좌표는 이미 변환되어 있음)
-        textsToRender.forEach(({ textObj, x, y }) => {
+        // 화면에 보이는 텍스트만 렌더링
+        visibleTexts.forEach(textObj => {
+            // ViewBox 좌표 → 스크린 좌표 변환 (필터링된 텍스트이므로 이미 화면 내)
+            const { x, y } = this.viewToCanvasCoords(textObj.x, textObj.y);
+            
             // 고정 크기: 9px (작은 크기, 줌과 무관하게 일정)
             const fontSize = 9;
             
@@ -3401,28 +3407,25 @@ class DxfPhotoEditor {
         const rect = this.getCachedRect();
         const margin = 50; // 여유 공간 (마커 크기 고려)
         
-        // 성능 최적화: 필터링과 좌표 변환을 한 번에 처리하여 중복 계산 제거
-        // 동일한 좌표 변환을 2번 수행하던 것을 1번만 수행하도록 개선 (30-50% 성능 향상)
-        const photosToRender = [];
-        
-        this.photos.forEach(photo => {
-            // ViewBox 좌표 → 스크린 좌표 변환 (1번만 수행)
+        // ViewBox 기반 필터링으로 화면에 보이는 사진만 선택
+        const visiblePhotos = this.photos.filter(photo => {
+            // ViewBox 좌표 → 스크린 좌표 변환
             const { x: screenX, y: screenY } = this.viewToCanvasCoords(photo.x, photo.y);
             
-            // 화면 내에 있는지 확인 (여유 공간 포함)
-            if (screenX >= -margin && 
-                screenX <= rect.width + margin && 
-                screenY >= -margin && 
-                screenY <= rect.height + margin) {
-                // 화면 내 사진만 배열에 추가 (좌표도 함께 저장)
-                photosToRender.push({ photo, screenX, screenY });
-            }
+            // 화면 밖에 있는지 확인 (여유 공간 포함)
+            return screenX >= -margin && 
+                   screenX <= rect.width + margin && 
+                   screenY >= -margin && 
+                   screenY <= rect.height + margin;
         });
         
-        this.debugLog('               📷 drawPhotos 실행 - 전체:', this.photos.length, '개, 화면 내:', photosToRender.length, '개');
+        this.debugLog('               📷 drawPhotos 실행 - 전체:', this.photos.length, '개, 화면 내:', visiblePhotos.length, '개');
         
-        // 화면에 보이는 사진만 렌더링 (좌표는 이미 변환되어 있음)
-        photosToRender.forEach(({ photo, screenX, screenY }) => {
+        // 화면에 보이는 사진만 렌더링
+        visiblePhotos.forEach((photo, index) => {
+            // ViewBox 좌표 → 스크린 좌표 변환 (필터링된 사진이므로 이미 화면 내)
+            const { x: screenX, y: screenY } = this.viewToCanvasCoords(photo.x, photo.y);
+            
             this.ctx.save();
             
             // 업로드 상태에 따른 색상 및 크기 결정
@@ -4022,7 +4025,7 @@ class DxfPhotoEditor {
                 const minSize = (this.originalViewBox?.width || 1000) * 0.01;
                 const maxSize = (this.originalViewBox?.width || 1000) * 10;
                 
-                if (newWidth > minSize && newWidth <= maxSize) {
+                if (newWidth >= minSize && newWidth <= maxSize) {
                     // 중심점 기준으로 ViewBox 재계산
                     const centerRatioX = (centerX - this.viewBox.x) / this.viewBox.width;
                     const centerRatioY = (centerY - this.viewBox.y) / this.viewBox.height;
@@ -4136,18 +4139,11 @@ class DxfPhotoEditor {
             }
             
             // 드래그나 핀치줌이 끝났을 때 지도 동기화 (지도 모드일 때만)
-            // 성능 최적화: Debounce 적용 (연속 확대/축소 시 마지막에만 실행, 100-500ms 성능 향상)
             if ((wasDragging || wasPinching) && this.isMapMode && this.map && !this.syncingFromMap && this.dxfBoundsWGS84) {
-                // 기존 호출 취소 (연속 확대/축소 시 불필요한 호출 방지)
-                if (this.mapSyncTimeout) {
-                    clearTimeout(this.mapSyncTimeout);
-                }
-                
-                // 마지막 호출만 실행 (300ms 후, 연속 동작 시 마지막에만 동기화)
-                this.mapSyncTimeout = setTimeout(() => {
+                // 약간의 지연 후 동기화 (터치 이벤트 처리 완료 후)
+                setTimeout(() => {
                     this.syncViewBoxToMapBounds();
-                    this.mapSyncTimeout = null;
-                }, 300);
+                }, 50);
             }
             
             // rect 캐시 무효화 (ViewBox가 변경되었을 수 있음)
@@ -4189,18 +4185,10 @@ class DxfPhotoEditor {
                 }, 300); // 300ms로 증가 (더블탭 감지 시간과 동일하게)
                 
                 // 핀치줌 종료 시 지도 동기화 (지도 모드일 때만)
-                // 성능 최적화: Debounce 적용 (연속 확대/축소 시 마지막에만 실행, 100-500ms 성능 향상)
                 if (this.isMapMode && this.map && !this.syncingFromMap && this.dxfBoundsWGS84) {
-                    // 기존 호출 취소 (연속 확대/축소 시 불필요한 호출 방지)
-                    if (this.mapSyncTimeout) {
-                        clearTimeout(this.mapSyncTimeout);
-                    }
-                    
-                    // 마지막 호출만 실행 (300ms 후, 연속 동작 시 마지막에만 동기화)
-                    this.mapSyncTimeout = setTimeout(() => {
+                    setTimeout(() => {
                         this.syncViewBoxToMapBounds();
-                        this.mapSyncTimeout = null;
-                    }, 300);
+                    }, 50);
                 }
                 
                 // 핀치줌 종료 시 사진 다시 그리기 (최신 상태 반영)
@@ -4261,25 +4249,18 @@ class DxfPhotoEditor {
      * 특정 점을 중심으로 줌 (부드러운 확대/축소)
      */
     zoomAt(centerX, centerY, factor) {
+        // 새로운 크기 계산
+        // factor > 1: 확대 (viewBox 크기 감소) → viewBox.width / factor
+        // factor < 1: 축소 (viewBox 크기 증가) → viewBox.width / factor
+        const newWidth = this.viewBox.width / factor;
+        const newHeight = this.viewBox.height / factor;
+        
         // 최소/최대 크기 제한
         const minSize = (this.originalViewBox?.width || 1000) * 0.01; // 최대 100배 확대
         const maxSize = (this.originalViewBox?.width || 1000) * 10;   // 최대 10배 축소
         
-        // minSize까지 필요한 배율 계산 (최대 확대까지 도달 가능하도록)
-        const requiredFactor = this.viewBox.width / minSize;
-        
-        // 요청된 배율과 필요한 배율 중 작은 값 사용
-        // 이렇게 하면 마지막 단계에서 필요한 만큼만 확대하여 minSize에 정확히 도달
-        const actualFactor = Math.min(factor, requiredFactor);
-        
-        // 새로운 크기 계산
-        // actualFactor > 1: 확대 (viewBox 크기 감소) → viewBox.width / actualFactor
-        // actualFactor < 1: 축소 (viewBox 크기 증가) → viewBox.width / actualFactor
-        const newWidth = this.viewBox.width / actualFactor;
-        const newHeight = this.viewBox.height / actualFactor;
-        
-        if (newWidth <= minSize || newWidth > maxSize) {
-            return; // 제한을 벗어나면 줌 취소 (minSize와 같을 때도 막기)
+        if (newWidth < minSize || newWidth > maxSize) {
+            return; // 제한을 벗어나면 줌 취소
         }
         
         // 중심점의 상대 위치 계산 (0~1 사이 값)
