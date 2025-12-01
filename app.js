@@ -3080,8 +3080,8 @@ class DxfPhotoEditor {
         const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
         circle.setAttribute('cx', entity.position.x);
         circle.setAttribute('cy', -entity.position.y);
-        circle.setAttribute('r', '0.15'); // 매우 작게
-        circle.setAttribute('fill', this.getEntityColor(entity)); // 실제 색상
+        circle.setAttribute('r', '0.03'); // 매우 작게 (기존 크기의 20%)
+        circle.setAttribute('fill', '#00FF00'); // 초록색 고정
         circle.setAttribute('class', 'dxf-point'); // CSS 클래스
         
         return circle;
@@ -3437,7 +3437,7 @@ class DxfPhotoEditor {
             if (isUploaded) {
                 // 업로드 완료 → 빨간점 (작은 크기)
                 markerColor = hasMemo ? '#9B51E0' : '#FF0000'; // 보라색(메모) 또는 빨간색
-                markerRadius = 3.75; // 직경 7.5px (작음)
+                markerRadius = 5.625; // 직경 11.25px (기존 1.5배)
             } else {
                 // 업로드 실패/대기 → 초록색 (5배 크기) - 사용자 알림
                 markerColor = '#00C853'; // 초록색 (주의 필요)
