@@ -7,6 +7,7 @@
  *   - Google Drive와의 파일 동기화 담당
  *   - OAuth 2.0 인증 관리
  *   - DXF, 사진, 메타데이터 업로드/다운로드
+ *   - 실시간 자동 저장 및 동기화
  * 
  * 주요 기능:
  *   1. Google Identity Services OAuth 인증
@@ -15,18 +16,27 @@
  *   4. 파일 업로드/다운로드 (멀티파트)
  *   5. 메타데이터 JSON 관리
  *   6. 사진 파일 삭제
+ *   7. 자동 재시도 로직 (업로드 실패 시)
  * 
- * 최적화:
+ * 성능 최적화:
  *   - 토큰 localStorage 캐싱 (만료 1분 전 자동 갱신)
  *   - 인증 재시도 로직 (401/403 자동 처리)
  *   - fetchWithAuth 통합 메서드
+ *   - redraw 호출 throttle (100ms, 빈번한 업데이트 방지)
+ *   - 개별 사진 업로드 실패 시에도 나머지 계속 진행
+ * 
+ * 데이터 흐름:
+ *   1. 사진 추가 → 메타데이터 JSON 업데이트
+ *   2. 자동 저장 (3초 Debounce) → Google Drive 업로드
+ *   3. 사진 파일 업로드 → 메타데이터에 파일명 저장
+ *   4. 업로드 실패 시 자동 재시도 (점진적 백오프)
  * 
  * 의존성:
  *   - Google Identity Services (GIS)
  *   - Google Drive API v3
  * 
- * 버전: 1.0.0
- * 최종 수정: 2025-11-18
+ * 버전: 1.1.0
+ * 최종 수정: 2025-12-02 (성능 최적화)
  * ========================================
  */
 
@@ -755,10 +765,14 @@ window.initGoogleDrive = async function() {
                             photo.uploaded = true;
                             successCount++;
                             
-                            // 각 사진 업로드 완료 시 즉시 화면 업데이트 (마커 색상 변경: 초록색 → 빨간색)
-                            // window.app이 존재하면 redraw() 호출하여 실시간 업데이트
+                            // 각 사진 업로드 완료 시 화면 업데이트 (마커 색상 변경: 초록색 → 빨간색)
+                            // 성능 최적화: throttle 적용하여 빈번한 redraw 방지
                             if (window.app && typeof window.app.redraw === 'function') {
-                                window.app.redraw();
+                                // 마지막 redraw 호출 후 100ms 이내면 스킵 (배터리 절약)
+                                if (!window.app._lastRedrawTime || (Date.now() - window.app._lastRedrawTime) > 100) {
+                                    window.app._lastRedrawTime = Date.now();
+                                    window.app.redraw();
+                                }
                             }
                         } catch (error) {
                             // 개별 사진 업로드 실패 시에도 나머지 사진은 계속 업로드
@@ -767,8 +781,13 @@ window.initGoogleDrive = async function() {
                             failCount++;
                             
                             // 화면 업데이트 (초록색 점으로 표시됨)
+                            // 성능 최적화: throttle 적용하여 빈번한 redraw 방지
                             if (window.app && typeof window.app.redraw === 'function') {
-                                window.app.redraw();
+                                // 마지막 redraw 호출 후 100ms 이내면 스킵 (배터리 절약)
+                                if (!window.app._lastRedrawTime || (Date.now() - window.app._lastRedrawTime) > 100) {
+                                    window.app._lastRedrawTime = Date.now();
+                                    window.app.redraw();
+                                }
                             }
                         }
                     }

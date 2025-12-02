@@ -6,12 +6,20 @@
  * 용도:
  *   - npm 패키지에서 필요한 라이브러리를 libs 폴더로 복사
  *   - GitHub Pages 배포를 위한 로컬 파일 준비
+ *   - CDN 폴백을 위한 로컬 파일 제공
  * 
  * 실행:
  *   npm run copy-libs
+ *   또는
+ *   npm run setup (install + copy-libs)
  * 
  * 복사 대상:
  *   - dxf-parser: DXF 파일 파싱 라이브러리
+ *     (node_modules/dxf-parser/dist/dxf-parser.min.js → libs/dxf-parser.min.js)
+ * 
+ * 배포:
+ *   - libs 폴더를 GitHub에 커밋
+ *   - index.html에서 로컬 파일 우선 사용, CDN은 폴백
  * 
  * 버전: 1.0.0
  * 최종 수정: 2025-11-18

@@ -15,9 +15,11 @@
  *   4. 텍스트 입력/편집
  *   5. Google Drive 자동 동기화
  *   6. 메타데이터 JSON 관리
+ *   7. Google Maps / V-World 지도 연동
+ *   8. GPS 현재 위치 표시
  * 
- * 최적화 (v1.1):
- *   - requestAnimationFrame으로 부드러운 렌더링
+ * 성능 최적화 (v1.2):
+ *   - requestAnimationFrame으로 부드러운 렌더링 (중복 취소 가능)
  *   - getBoundingClientRect() 캐싱 (100ms)
  *   - 중복 렌더링 방지 (pending 플래그)
  *   - 이미지 메모리 명시적 정리
@@ -27,9 +29,24 @@
  *   - 화면 밖 요소 렌더링 스킵
  *   - 백그라운드 모드 최적화 (Visibility API)
  *   - Google Maps 이벤트 최적화 (더블 버퍼링)
+ *   - 이벤트 리스너 추적 및 정리 (메모리 누수 방지)
+ *   - 타이머 추적 및 정리 (배터리 절약)
+ *   - 백그라운드에서 불필요한 렌더링/타이머 중지
+ *   - redraw 호출 throttle (100ms)
  * 
- * 버전: 1.1.0
- * 최종 수정: 2025-11-27
+ * 메모리 관리:
+ *   - 모든 이벤트 리스너 추적 및 정리
+ *   - 모든 타이머/인터벌 추적 및 정리
+ *   - 이미지 Blob URL 명시적 해제
+ *   - 페이지 종료 시 자동 cleanup
+ * 
+ * 배터리 최적화:
+ *   - 백그라운드에서 렌더링 스킵
+ *   - 백그라운드에서 불필요한 타이머 중지
+ *   - 중요 타이머만 백그라운드에서 실행 ('save' 플래그)
+ * 
+ * 버전: 1.2.0
+ * 최종 수정: 2025-12-02 (성능 최적화)
  * ========================================
  */
 
@@ -125,6 +142,14 @@ class DxfPhotoEditor {
         this.texts = []; // { id, x, y, text, fontSize }
         this.metadataDirty = false;
         
+        // 디버그 관련
+        this.colorDebugCount = 0; // 색상 디버그 카운터
+        this._colorArrayChecked = false; // 색상 배열 체크 플래그
+        
+        // 사진 추가 관련
+        this.pendingPhotoLocation = null; // 대기 중인 사진 위치
+        this.tempFetchedPhotoData = null; // 임시로 가져온 사진 데이터
+        
         // 이미지 용량 설정 (기본값: 500KB)
         // '500KB', '1MB', 'original' 중 하나
         this.imageSizeSetting = localStorage.getItem('dmap:imageSize') || '500KB';
@@ -149,6 +174,7 @@ class DxfPhotoEditor {
         // 렌더링 최적화
         this.redrawPending = false;
         this.updatePending = false;
+        this.animationFrameId = null; // requestAnimationFrame ID 추적
         
         // getBoundingClientRect() 캐싱 (성능 최적화)
         this.cachedRect = null;
@@ -170,6 +196,10 @@ class DxfPhotoEditor {
         this.autoRetryMaxDelay = 60000; // 최대 60초 간격
         this.autoRetryAttempts = new Map(); // 사진별 재시도 횟수 추적
         
+        // 타이머 추적 (메모리 누수 방지 및 배터리 최적화)
+        this.activeTimers = new Set(); // 활성 타이머 ID 추적
+        this.activeIntervals = new Set(); // 활성 인터벌 ID 추적
+        
         // ViewBox 업데이트 Throttle (60fps = 16ms)
         this.updateViewBoxThrottled = this.throttle(() => {
             this.updateViewBox();
@@ -179,7 +209,188 @@ class DxfPhotoEditor {
         this.pauseAutoSave = false;
         this.setupVisibilityListener();
         
+        // 이벤트 리스너 추적 (메모리 누수 방지)
+        this.eventListeners = []; // { element, event, handler, options }
+        
         this.init();
+    }
+    
+    /**
+     * 이벤트 리스너 등록 (추적 가능)
+     * 메모리 누수 방지를 위해 모든 리스너를 추적
+     */
+    addTrackedEventListener(element, event, handler, options) {
+        if (!element) {
+            console.warn('⚠️ 이벤트 리스너 등록 실패: 요소가 null입니다', event);
+            return;
+        }
+        element.addEventListener(event, handler, options);
+        this.eventListeners.push({ element, event, handler, options });
+    }
+    
+    /**
+     * 모든 이벤트 리스너 제거 (메모리 누수 방지)
+     */
+    cleanupEventListeners() {
+        let removedCount = 0;
+        this.eventListeners.forEach(({ element, event, handler, options }) => {
+            try {
+                element.removeEventListener(event, handler, options);
+                removedCount++;
+            } catch (error) {
+                console.warn('⚠️ 이벤트 리스너 제거 실패:', error, { event, element });
+            }
+        });
+        this.eventListeners = [];
+        if (removedCount > 0) {
+            console.log(`🧹 ${removedCount}개의 이벤트 리스너 제거됨`);
+        }
+    }
+    
+    /**
+     * 안전한 setTimeout (추적 및 정리 가능)
+     * 배터리 최적화: 백그라운드에서 불필요한 타이머 중지
+     * 
+     * @param {Function} callback - 실행할 함수
+     * @param {number} delay - 지연 시간 (ms)
+     * @param {...any} args - callback에 전달할 인자 (마지막 인자가 'save' 또는 'critical'이면 중요 타이머)
+     * @returns {number|null} 타이머 ID 또는 null (백그라운드에서 스킵된 경우)
+     */
+    safeSetTimeout(callback, delay, ...args) {
+        // 백그라운드 모드이고 중요하지 않은 타이머는 스킵
+        if (this.pauseAutoSave && document.hidden) {
+            // 중요 타이머만 백그라운드에서 실행 (예: 저장 관련)
+            const lastArg = args[args.length - 1];
+            const isCritical = lastArg === 'save' || lastArg === 'critical';
+            if (!isCritical) {
+                return null; // 타이머 생성 안 함 (배터리 절약)
+            }
+        }
+        
+        const timerId = setTimeout(() => {
+            this.activeTimers.delete(timerId);
+            // 'save' 또는 'critical' 플래그 제거 후 callback 호출
+            const filteredArgs = args.filter(arg => arg !== 'save' && arg !== 'critical');
+            callback(...filteredArgs);
+        }, delay);
+        
+        this.activeTimers.add(timerId);
+        return timerId;
+    }
+    
+    /**
+     * 안전한 setInterval (추적 및 정리 가능)
+     */
+    safeSetInterval(callback, delay, ...args) {
+        const intervalId = setInterval(() => {
+            // 백그라운드 모드에서는 인터벌 중지
+            if (this.pauseAutoSave && document.hidden) {
+                this.safeClearInterval(intervalId);
+                return;
+            }
+            callback(...args);
+        }, delay);
+        
+        this.activeIntervals.add(intervalId);
+        return intervalId;
+    }
+    
+    /**
+     * 안전한 clearTimeout
+     */
+    safeClearTimeout(timerId) {
+        if (timerId) {
+            clearTimeout(timerId);
+            this.activeTimers.delete(timerId);
+        }
+    }
+    
+    /**
+     * 안전한 clearInterval
+     */
+    safeClearInterval(intervalId) {
+        if (intervalId) {
+            clearInterval(intervalId);
+            this.activeIntervals.delete(intervalId);
+        }
+    }
+    
+    /**
+     * 모든 타이머 정리 (메모리 누수 방지 및 배터리 최적화)
+     */
+    cleanupTimers() {
+        // 명명된 타이머들 정리
+        if (this.longPressTimer) {
+            clearTimeout(this.longPressTimer);
+            this.longPressTimer = null;
+        }
+        if (this.singleTapTimeout) {
+            clearTimeout(this.singleTapTimeout);
+            this.singleTapTimeout = null;
+        }
+        if (this.autoSaveTimeout) {
+            clearTimeout(this.autoSaveTimeout);
+            this.autoSaveTimeout = null;
+        }
+        if (this.autoRetryTimeout) {
+            clearTimeout(this.autoRetryTimeout);
+            this.autoRetryTimeout = null;
+        }
+        if (this.boundsChangeTimeout) {
+            clearTimeout(this.boundsChangeTimeout);
+            this.boundsChangeTimeout = null;
+        }
+        
+        // 추적 중인 모든 타이머 정리
+        this.activeTimers.forEach(timerId => {
+            clearTimeout(timerId);
+        });
+        this.activeTimers.clear();
+        
+        // 추적 중인 모든 인터벌 정리
+        this.activeIntervals.forEach(intervalId => {
+            clearInterval(intervalId);
+        });
+        this.activeIntervals.clear();
+        
+        console.log('🧹 모든 타이머 정리됨');
+    }
+    
+    /**
+     * 전체 정리 (컴포넌트 해제 시 호출)
+     */
+    cleanup() {
+        this.cleanupTimers();
+        this.cleanupEventListeners();
+        
+        // requestAnimationFrame 취소
+        if (this.animationFrameId !== null) {
+            cancelAnimationFrame(this.animationFrameId);
+            this.animationFrameId = null;
+        }
+        
+        // Google Maps 리스너 정리
+        if (this.mapBoundsListener && this.map) {
+            try {
+                google.maps.event.removeListener(this.mapBoundsListener);
+                this.mapBoundsListener = null;
+            } catch (error) {
+                console.warn('⚠️ Google Maps 리스너 제거 실패:', error);
+            }
+        }
+        
+        // 이미지 메모리 정리
+        this.photos.forEach(photo => {
+            if (photo.imageData && photo.imageData.startsWith('blob:')) {
+                try {
+                    URL.revokeObjectURL(photo.imageData);
+                } catch (error) {
+                    // 무시
+                }
+            }
+        });
+        
+        console.log('✅ 앱 정리 완료');
     }
 
     debugLog(...args) {
@@ -291,6 +502,11 @@ class DxfPhotoEditor {
         
         // 디버깅 (처음 20개)
         if (this.debugMode && this.colorDebugCount < 20) {
+            const source = entity.colorIndex === 256 || entity.colorIndex === undefined 
+                ? 'layer' 
+                : entity.colorIndex !== undefined 
+                    ? 'entity' 
+                    : 'default';
             this.debugLog(`🎨 [${this.colorDebugCount}] ${entity.type} → ${color} (출처: ${source})`);
             this.debugLog(`   colorIndex=${entity.colorIndex}, layer="${entity.layer}"`);
             this.colorDebugCount++;
@@ -585,7 +801,7 @@ class DxfPhotoEditor {
      * - 저장 진행 중: 백그라운드 전환과 관계없이 저장 계속 진행
      */
     setupVisibilityListener() {
-        document.addEventListener('visibilitychange', () => {
+        const visibilityHandler = () => {
             if (document.hidden) {
                 // 백그라운드 진입
                 // ⚠️ 중요: 저장이 진행 중이 아닐 때만 일시 정지
@@ -620,11 +836,15 @@ class DxfPhotoEditor {
                     });
                 }
             }
-        });
+        };
+        this.addTrackedEventListener(document, 'visibilitychange', visibilityHandler);
         
         // ⚠️ 중요: 페이지 종료 전 저장되지 않은 데이터 확인 및 저장 시도
         // beforeunload: 사용자에게 경고 표시 (모바일에서는 제한적)
-        window.addEventListener('beforeunload', (e) => {
+        const beforeUnloadHandler = (e) => {
+            // 정리 작업 수행
+            this.cleanup();
+            
             const hasUnsavedData = this.photos.some(p => !p.uploaded) || this.metadataDirty;
             if (hasUnsavedData && !this.isAutoSaving) {
                 // 저장되지 않은 데이터가 있으면 저장 시도
@@ -659,10 +879,14 @@ class DxfPhotoEditor {
                 e.returnValue = '저장되지 않은 데이터가 있습니다. 정말 나가시겠습니까?';
                 return e.returnValue;
             }
-        });
+        };
+        this.addTrackedEventListener(window, 'beforeunload', beforeUnloadHandler);
         
         // pagehide: 페이지가 숨겨질 때 (모바일에서 더 신뢰성 있음)
-        window.addEventListener('pagehide', (e) => {
+        const pageHideHandler = (e) => {
+            // 정리 작업 수행
+            this.cleanup();
+            
             const hasUnsavedData = this.photos.some(p => !p.uploaded) || this.metadataDirty;
             if (hasUnsavedData && !this.isAutoSaving) {
                 console.log('⚠️ 페이지 숨김 감지 - 저장되지 않은 데이터 있음');
@@ -670,7 +894,8 @@ class DxfPhotoEditor {
                 // 최선의 노력으로만 저장 시도
                 // 실제 저장은 visibilitychange 이벤트에서 처리됨
             }
-        });
+        };
+        this.addTrackedEventListener(window, 'pagehide', pageHideHandler);
     }
     
     setupCanvas() {
@@ -691,10 +916,11 @@ class DxfPhotoEditor {
         updateCanvasSize();
         
         // 윈도우 크기 변경 시 재계산
-        window.addEventListener('resize', () => {
+        const resizeHandler = () => {
             this.cachedRect = null;
             updateCanvasSize();
-        });
+        };
+        this.addTrackedEventListener(window, 'resize', resizeHandler);
     }
     
     setupEventListeners() {
@@ -893,14 +1119,22 @@ class DxfPhotoEditor {
         // 내보내기 버튼 제거됨 (Google Drive 자동 저장 사용)
         
         // SVG 드래그 (팬) - SVG에서 이벤트 받기
-        this.svg.addEventListener('mousedown', this.onMouseDown.bind(this));
-        this.svg.addEventListener('mousemove', this.onMouseMove.bind(this));
-        this.svg.addEventListener('mouseup', this.onMouseUp.bind(this));
+        const onMouseDownBound = this.onMouseDown.bind(this);
+        const onMouseMoveBound = this.onMouseMove.bind(this);
+        const onMouseUpBound = this.onMouseUp.bind(this);
+        const onTouchStartBound = this.onTouchStart.bind(this);
+        const onTouchMoveBound = this.onTouchMove.bind(this);
+        const onTouchEndBound = this.onTouchEnd.bind(this);
+        const onCanvasClickBound = this.onCanvasClick.bind(this);
+        
+        this.addTrackedEventListener(this.svg, 'mousedown', onMouseDownBound);
+        this.addTrackedEventListener(this.svg, 'mousemove', onMouseMoveBound);
+        this.addTrackedEventListener(this.svg, 'mouseup', onMouseUpBound);
         
         // 터치 이벤트 (모바일) - SVG에서 (passive: false로 preventDefault 가능)
-        this.svg.addEventListener('touchstart', this.onTouchStart.bind(this), { passive: false });
-        this.svg.addEventListener('touchmove', this.onTouchMove.bind(this), { passive: false });
-        this.svg.addEventListener('touchend', this.onTouchEnd.bind(this), { passive: false });
+        this.addTrackedEventListener(this.svg, 'touchstart', onTouchStartBound, { passive: false });
+        this.addTrackedEventListener(this.svg, 'touchmove', onTouchMoveBound, { passive: false });
+        this.addTrackedEventListener(this.svg, 'touchend', onTouchEndBound, { passive: false });
         
         // 지도 컨테이너에서도 동일한 이벤트 처리 (지도 활성화 시 롱프레스/탭 유지)
         if (this.mapContainer) {
@@ -938,7 +1172,7 @@ class DxfPhotoEditor {
         }
         
         // 사진 클릭은 SVG 클릭 이벤트에서 처리 (Canvas는 pointer-events: none 유지)
-        this.svg.addEventListener('click', this.onCanvasClick.bind(this));
+        this.addTrackedEventListener(this.svg, 'click', onCanvasClickBound);
         
         // 줌 버튼 (좌측 하단 고정)
         const zoomInBtn = document.getElementById('zoom-in');
@@ -1157,23 +1391,9 @@ class DxfPhotoEditor {
         }
         
         // 컨텍스트 메뉴 외부 클릭/터치 시 닫기
-        const handleOutsideClick = (e) => {
-            const contextMenu = document.getElementById('context-menu');
-            
-            if (!contextMenu || !contextMenu.classList.contains('active')) {
-                return;
-            }
-            
-            // 컨텍스트 메뉴 외부를 클릭한 경우에만 닫기
-            if (!contextMenu.contains(e.target)) {
-                console.log('👆 메뉴 외부 클릭 - 메뉴 닫기');
-                this.hideContextMenu();
-            }
-        };
-        
-        // SVG 영역 클릭 시 메뉴 닫기
-        this.svg.addEventListener('touchstart', handleOutsideClick);
-        this.svg.addEventListener('click', handleOutsideClick);
+        // ⚠️ 주의: SVG의 touchstart/click은 이미 등록되어 있으므로
+        // 컨텍스트 메뉴 닫기는 onCanvasClick에서 처리됨
+        // (중복 이벤트 리스너 방지)
         
         // 사진 보기 모달 이벤트
         const closePhotoViewBtn = document.getElementById('close-photo-view');
@@ -1222,7 +1442,7 @@ class DxfPhotoEditor {
 
         this.setupPhotoMemoInlineEditing();
 
-        window.addEventListener('drive-auth-changed', (event) => {
+        const driveAuthChangedHandler = (event) => {
             const authenticated = !!event.detail?.authenticated;
             this.setLoginButtonState(authenticated);
             if (!this.driveStateInitialized) {
@@ -1236,7 +1456,8 @@ class DxfPhotoEditor {
                 this.pendingLocalDriveSync = false;
                 this.showToast('Google Drive와 다시 연결되었습니다.');
             }
-        });
+        };
+        this.addTrackedEventListener(window, 'drive-auth-changed', driveAuthChangedHandler);
 
     }
     
@@ -1248,21 +1469,9 @@ class DxfPhotoEditor {
      */
     setupLongPressEvents() {
         // 마우스 이벤트 (데스크탑 테스트용)
-        this.svg.addEventListener('mousedown', (e) => {
-            if (e.button === 0) { // 좌클릭만
-                this.startLongPress(e.clientX, e.clientY);
-            }
-        });
-        
-        this.svg.addEventListener('mousemove', () => {
-            if (this.longPressTimer && !this.isDragging) {
-                this.cancelLongPress();
-            }
-        });
-        
-        this.svg.addEventListener('mouseup', () => {
-            this.cancelLongPress();
-        });
+        // ⚠️ 주의: SVG의 mousedown/mousemove/mouseup은 이미 setupEventListeners에서 등록됨
+        // 여기서는 롱프레스 전용 핸들러만 추가 (중복 방지)
+        // 실제 롱프레스는 onTouchStart/onMouseDown에서 처리됨
     }
     
     /**
@@ -2874,9 +3083,16 @@ class DxfPhotoEditor {
      * 최적화 내용:
      * - requestAnimationFrame으로 다음 프레임에 렌더링 (브라우저 최적화)
      * - redrawPending 플래그로 중복 호출 방지
+     * - 백그라운드에서 렌더링 스킵 (배터리 절약)
      * - DXF SVG 렌더링 + Canvas 사진/텍스트 렌더링
      */
     redraw() {
+        // 백그라운드 모드에서는 렌더링 스킵 (배터리 절약)
+        if (document.hidden && this.pauseAutoSave) {
+            this.debugLog('   ⏸️ 백그라운드 모드 - redraw 스킵');
+            return;
+        }
+        
         // requestAnimationFrame으로 부드러운 렌더링
         if (this.redrawPending) {
             this.debugLog('   ⏸️ redraw 이미 대기 중, 건너뜀');
@@ -2886,8 +3102,21 @@ class DxfPhotoEditor {
         this.redrawPending = true;
         this.debugLog('   ▶ redraw 예약됨 (requestAnimationFrame)');
         
-        requestAnimationFrame(() => {
+        // 기존 animationFrame 취소 (중복 방지)
+        if (this.animationFrameId !== null) {
+            cancelAnimationFrame(this.animationFrameId);
+        }
+        
+        this.animationFrameId = requestAnimationFrame(() => {
             this.redrawPending = false;
+            this.animationFrameId = null;
+            
+            // 다시 한 번 백그라운드 체크 (실행 시점에 변경되었을 수 있음)
+            if (document.hidden && this.pauseAutoSave) {
+                this.debugLog('   ⏸️ 백그라운드 모드 - redraw 실행 스킵');
+                return;
+            }
+            
             this.debugLog('   🎨 redraw 실행 중...');
             
             if (!this.dxfData) {
@@ -4831,10 +5060,12 @@ class DxfPhotoEditor {
         // Debounce: 마지막 변경 후 일정 시간 대기 (force가 아닐 때만)
         // 성능 최적화: 메모 입력 등 빈번한 변경 시 불필요한 저장 방지
         if (!force) {
-            clearTimeout(this.autoSaveTimeout);
-            this.autoSaveTimeout = setTimeout(() => {
+            if (this.autoSaveTimeout) {
+                this.safeClearTimeout(this.autoSaveTimeout);
+            }
+            this.autoSaveTimeout = this.safeSetTimeout(() => {
                 this.autoSave(true); // 실제 저장 실행
-            }, this.autoSaveDelay);
+            }, this.autoSaveDelay, 'save'); // 'save' 플래그로 중요 타이머 표시
             return;
         }
         
@@ -4981,7 +5212,9 @@ class DxfPhotoEditor {
                 // 중복 업로드 방지
                 if (this.autoRetryTimeout) {
                     console.log('   ⏭️ 자동 재시도 취소 (autoSavePending이 처리함)');
-                    clearTimeout(this.autoRetryTimeout);
+                    if (this.autoRetryTimeout) {
+                        this.safeClearTimeout(this.autoRetryTimeout);
+                    }
                     this.autoRetryTimeout = null;
                 }
                 
@@ -5027,7 +5260,7 @@ class DxfPhotoEditor {
         
         console.log(`🔄 자동 재시도 예약: ${failedPhotos.length}개 사진, ${delay / 1000}초 후 재시도 (시도 횟수: ${attemptCount + 1})`);
         
-        this.autoRetryTimeout = setTimeout(() => {
+        this.autoRetryTimeout = this.safeSetTimeout(() => {
             this.autoRetryTimeout = null;
             this.autoRetryAttempts.set('global', attemptCount + 1);
             
@@ -5038,7 +5271,7 @@ class DxfPhotoEditor {
                 // 재시도 실패 시 다시 예약 (최대 횟수 제한 없음)
                 this.scheduleAutoRetry();
             });
-        }, delay);
+        }, delay, 'save'); // 'save' 플래그로 중요 타이머 표시
     }
     
     /**
@@ -6266,16 +6499,20 @@ async function waitForDriveReady(timeoutMs = 5000) {
     }
 
     return new Promise(resolve => {
-        const interval = setInterval(() => {
+        let interval = null;
+        let timeout = null;
+        
+        interval = setInterval(() => {
             if (window.driveInitPromise) {
-                clearInterval(interval);
+                if (interval) clearInterval(interval);
+                if (timeout) clearTimeout(timeout);
                 window.driveInitPromise.then(resolve).catch(resolve);
                 return;
             }
         }, 100);
 
-        setTimeout(() => {
-            clearInterval(interval);
+        timeout = setTimeout(() => {
+            if (interval) clearInterval(interval);
             resolve();
         }, timeoutMs);
     });

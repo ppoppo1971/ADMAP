@@ -5,26 +5,36 @@ DMAP - DXF 도면 사진 편집기 (UI)
 ========================================
 
 용도:
-  - iPhone 13 PRO 최적화 PWA
+  - iPhone 13 PRO 최적화 PWA (Progressive Web App)
   - DXF 도면 뷰잉 및 사진/텍스트 삽입
   - Google Drive 실시간 동기화
+  - 현장에서 도면에 사진/텍스트 추가 후 데스크톱 AutoCAD로 불러오기
 
 주요 UI 컴포넌트:
-  1. 파일 선택 화면 (Google Drive / 로컬)
-  2. 도면 뷰어 화면 (SVG + Canvas)
-  3. 햄버거 메뉴 (슬라이딩)
-  4. 롱프레스 컨텍스트 메뉴
-  5. 사진 보기 모달
-  6. 텍스트 입력 모달
+  1. 파일 선택 화면 (Google Drive / 로컬 저장소)
+  2. 도면 뷰어 화면 (SVG + Canvas 레이어 구조)
+  3. 햄버거 메뉴 (슬라이딩 메뉴, 우측 상단)
+  4. 롱프레스 컨텍스트 메뉴 (사진/텍스트 추가)
+  5. 사진 보기 모달 (네비게이션 및 메모 편집)
+  6. 텍스트 입력/편집 모달
 
-최적화:
+성능 최적화:
   - touch-action: none (터치 제스처 직접 제어)
   - will-change: transform (GPU 가속)
   - vector-effect: non-scaling-stroke (SVG 선 굵기 고정)
-  - vConsole 디버깅 콘솔 내장
+  - vConsole 디버깅 콘솔 내장 (모바일 디버깅)
+  - 이벤트 리스너 추적 및 정리 (메모리 누수 방지)
+  - 백그라운드 모드 최적화 (배터리 절약)
 
-버전: 1.0.0 (0353)
-최종 수정: 2025-11-18
+외부 라이브러리:
+  - DxfParser: DXF 파일 파싱
+  - Proj4js: 좌표계 변환 (EPSG:5186 → WGS84)
+  - Google Maps API: 지도 표시
+  - Google Identity Services: OAuth 인증
+  - vConsole: 모바일 디버깅
+
+버전: 1.2.0
+최종 수정: 2025-12-02 (성능 최적화)
 ========================================
 -->
 <html lang="ko">
