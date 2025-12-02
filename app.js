@@ -1650,6 +1650,7 @@ class DxfPhotoEditor {
     
     /**
      * GitHub에서 프로그램을 다시 로드 (캐시 무시)
+     * 강력한 캐시 무시 로직: HTML, CSS, JS 파일 모두 최신 버전으로 로드
      */
     async reloadFromGitHub() {
         try {
@@ -1682,21 +1683,44 @@ class DxfPhotoEditor {
                 }
             }
             
+            // localStorage에 캐시 무시 플래그 설정 (다음 로드 시 스크립트에 타임스탬프 추가)
+            const cacheBuster = Date.now().toString();
+            try {
+                localStorage.setItem('dmap:cacheBuster', cacheBuster);
+                localStorage.setItem('dmap:forceReload', 'true');
+                console.log('✅ 캐시 무시 플래그 설정:', cacheBuster);
+            } catch (error) {
+                console.warn('⚠️ localStorage 설정 실패:', error);
+            }
+            
             // 잠시 대기 후 페이지 새로고침 (캐시 무시)
             await new Promise(resolve => setTimeout(resolve, 300));
             
             // 쿼리 파라미터를 추가하여 강제 새로고침 (캐시 무시)
             const url = new URL(window.location.href);
-            url.searchParams.set('reload', Date.now().toString());
+            url.searchParams.set('reload', cacheBuster); // 타임스탬프 사용
             url.searchParams.set('backToList', 'true'); // 목록 화면으로 돌아갈 것을 표시
+            url.searchParams.set('_nocache', cacheBuster); // 추가 캐시 무시 파라미터
             
-            // 페이지 새로고침 (캐시 무시)
-            window.location.href = url.toString();
+            // ⚠️ 중요: window.location.replace() 사용 (히스토리 스택에 남지 않음)
+            // window.location.href보다 더 강력한 캐시 무시 효과
+            window.location.replace(url.toString());
             
         } catch (error) {
             console.error('❌ GitHub에서 다시 로드 실패:', error);
-            // 오류 발생 시 일반 새로고침 시도
-            window.location.reload(true);
+            // 오류 발생 시 강제 새로고침 시도
+            try {
+                // localStorage 플래그 설정
+                localStorage.setItem('dmap:forceReload', 'true');
+                // replace() 사용하여 캐시 무시
+                const url = new URL(window.location.href);
+                url.searchParams.set('reload', Date.now().toString());
+                url.searchParams.set('backToList', 'true');
+                window.location.replace(url.toString());
+            } catch (fallbackError) {
+                // 최후의 수단: 일반 새로고침 (deprecated이지만 작동함)
+                window.location.reload(true);
+            }
         }
     }
     

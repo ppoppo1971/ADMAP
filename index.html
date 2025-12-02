@@ -1210,13 +1210,52 @@ DMAP - DXF 도면 사진 편집기 (UI)
     <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDVwJrvIcbqAOX24g9JODhD7DGtTz7z2Pg&libraries=geometry" async defer></script>
     
     <!-- Google Drive 모듈 (먼저 로드) -->
-    <script src="google-drive.js"></script>
+    <script>
+        // 캐시 무시: localStorage에서 플래그 확인하여 타임스탬프 추가
+        (function() {
+            try {
+                const forceReload = localStorage.getItem('dmap:forceReload');
+                const cacheBuster = localStorage.getItem('dmap:cacheBuster');
+                
+                let driveScriptSrc = 'google-drive.js';
+                let appScriptSrc = 'app.js';
+                
+                if (forceReload === 'true' && cacheBuster) {
+                    console.log('🔄 캐시 무시 모드: 타임스탬프 추가', cacheBuster);
+                    // 플래그 제거 (한 번만 적용)
+                    localStorage.removeItem('dmap:forceReload');
+                    // 스크립트 URL에 타임스탬프 추가
+                    driveScriptSrc += '?v=' + cacheBuster;
+                    appScriptSrc += '?v=' + cacheBuster;
+                }
+                
+                // Google Drive 스크립트 로드
+                const driveScript = document.createElement('script');
+                driveScript.src = driveScriptSrc;
+                document.head.appendChild(driveScript);
+                
+                // 앱 스크립트 로드 (defer)
+                const appScript = document.createElement('script');
+                appScript.src = appScriptSrc;
+                appScript.defer = true;
+                document.head.appendChild(appScript);
+            } catch (error) {
+                console.warn('⚠️ 캐시 무시 로직 오류, 일반 로드:', error);
+                // 오류 시 일반 로드
+                const driveScript = document.createElement('script');
+                driveScript.src = 'google-drive.js';
+                document.head.appendChild(driveScript);
+                
+                const appScript = document.createElement('script');
+                appScript.src = 'app.js';
+                appScript.defer = true;
+                document.head.appendChild(appScript);
+            }
+        })();
+    </script>
     
     <!-- Google Identity Services (나중에 로드하여 initGoogleDrive 호출) -->
     <script src="https://accounts.google.com/gsi/client" onload="initGoogleDrive()"></script>
-    
-    <!-- 앱 스크립트 (defer로 라이브러리 로드 후 실행) -->
-    <script src="app.js" defer></script>
 </body>
 </html>
 
