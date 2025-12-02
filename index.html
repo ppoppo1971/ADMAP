@@ -1092,10 +1092,6 @@ DMAP - DXF 도면 사진 편집기 (UI)
 
     <!-- 외부 라이브러리 (로컬 파일 우선) -->
     <script>
-        console.log('========================================');
-        console.log('📱 DMAP index.html 로드됨');
-        console.log('📅 페이지 로드 시간:', new Date().toISOString());
-        console.log('========================================');
         console.log('📦 라이브러리 로드 시작...');
         
         // 로컬 파일 우선, CDN은 폴백
@@ -1233,32 +1229,15 @@ DMAP - DXF 도면 사진 편집기 (UI)
                     appScriptSrc += '?v=' + cacheBuster;
                 }
                 
-                // 정적 스크립트 태그로 변경 (더 안정적)
-                console.log('📦 스크립트 로드 시작...');
-                console.log('   google-drive.js:', driveScriptSrc);
-                console.log('   app.js:', appScriptSrc);
-                
-                // Google Drive 스크립트
+                // Google Drive 스크립트 로드
                 const driveScript = document.createElement('script');
                 driveScript.src = driveScriptSrc;
-                driveScript.onload = function() {
-                    console.log('✅ google-drive.js 로드 완료');
-                };
-                driveScript.onerror = function() {
-                    console.error('❌ google-drive.js 로드 실패');
-                };
                 document.head.appendChild(driveScript);
                 
-                // 앱 스크립트 (defer)
+                // 앱 스크립트 로드 (defer)
                 const appScript = document.createElement('script');
                 appScript.src = appScriptSrc;
                 appScript.defer = true;
-                appScript.onload = function() {
-                    console.log('✅ app.js 로드 완료');
-                };
-                appScript.onerror = function() {
-                    console.error('❌ app.js 로드 실패');
-                };
                 document.head.appendChild(appScript);
             } catch (error) {
                 console.warn('⚠️ 캐시 무시 로직 오류, 일반 로드:', error);
@@ -1276,31 +1255,7 @@ DMAP - DXF 도면 사진 편집기 (UI)
     </script>
     
     <!-- Google Identity Services (나중에 로드하여 initGoogleDrive 호출) -->
-    <script>
-        // initGoogleDrive가 정의될 때까지 대기한 후 호출
-        function initGoogleIdentityServices() {
-            if (typeof window.initGoogleDrive === 'function') {
-                console.log('✅ initGoogleDrive 함수 발견, 초기화 시작');
-                window.initGoogleDrive();
-            } else {
-                // initGoogleDrive가 아직 정의되지 않았으면 재시도 (최대 5초)
-                console.log('⏳ initGoogleDrive 대기 중...');
-                let retries = 0;
-                const checkInterval = setInterval(function() {
-                    retries++;
-                    if (typeof window.initGoogleDrive === 'function') {
-                        clearInterval(checkInterval);
-                        console.log('✅ initGoogleDrive 함수 발견, 초기화 시작');
-                        window.initGoogleDrive();
-                    } else if (retries >= 50) {
-                        clearInterval(checkInterval);
-                        console.error('❌ initGoogleDrive 함수를 찾을 수 없습니다 (5초 타임아웃)');
-                    }
-                }, 100);
-            }
-        }
-    </script>
-    <script src="https://accounts.google.com/gsi/client" onload="initGoogleIdentityServices()"></script>
+    <script src="https://accounts.google.com/gsi/client" onload="initGoogleDrive()"></script>
 </body>
 </html>
 
