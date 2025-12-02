@@ -164,6 +164,12 @@ class DxfPhotoEditor {
         this.isAutoSaving = false;
         this.autoSavePending = false; // 저장 완료 후 재실행 플래그
         
+        // 자동 재시도 관련
+        this.autoRetryTimeout = null;
+        this.autoRetryDelay = 5000; // 5초 후 재시도
+        this.autoRetryMaxDelay = 60000; // 최대 60초 간격
+        this.autoRetryAttempts = new Map(); // 사진별 재시도 횟수 추적
+        
         // ViewBox 업데이트 Throttle (60fps = 16ms)
         this.updateViewBoxThrottled = this.throttle(() => {
             this.updateViewBox();
@@ -4934,25 +4940,58 @@ class DxfPhotoEditor {
                 const success = await window.saveToDrive(appData, window.currentDriveFile.name);
                 
                 if (success) {
-                    // saveToDrive() 내에서 이미 photo.uploaded = true가 설정되었지만,
-                    // 명시적으로 확인하고 메모리 해제
+                    // ⚠️ 중요: Google Drive에 확실히 저장된 사진만 메모리 해제
+                    // saveToDrive() 내에서 개별 사진 업로드 성공 시 photo.uploaded = true 설정됨
+                    // 업로드 실패한 사진은 photo.uploaded = false로 유지됨
+                    let memoryFreedCount = 0;
+                    let memoryKeptCount = 0;
+                    
                     newPhotos.forEach(photo => {
-                        // saveToDrive()에서 이미 uploaded = true로 설정되었을 수 있음
-                        // 하지만 확실하게 설정하고 메모리 해제
-                        photo.uploaded = true;
-                        
-                        // 명시적 메모리 해제
-                        // ⚠️ photo.image.src = '' 설정 시 Image 객체가 빈 문자열을 로드하려고 시도하여
-                        // onerror 이벤트가 발생하므로, photo.image = null만 설정
-                        if (photo.image) {
-                            // onerror 핸들러 제거 (오류 이벤트 방지)
-                            photo.image.onerror = null;
-                            photo.image.onload = null;
+                        // ⚠️ 핵심: uploaded === true인 사진만 메모리 해제
+                        // 업로드 실패한 사진은 메모리 유지 (재시도 가능하도록)
+                        if (photo.uploaded === true) {
+                            // Google Drive에 확실히 저장 완료된 사진만 메모리 해제
+                            
+                            // Image 객체 메모리 해제
+                            if (photo.image) {
+                                // onerror 핸들러 제거 (오류 이벤트 방지)
+                                photo.image.onerror = null;
+                                photo.image.onload = null;
+                                photo.image = null;
+                            }
+                            
+                            // 이미지 데이터 메모리 해제 (Google Drive에 저장 완료되었으므로)
+                            photo.imageData = null;
+                            memoryFreedCount++;
+                            
+                            console.log(`   💾 메모리 해제: ${photo.fileName || '사진'}`);
+                        } else {
+                            // 업로드 실패한 사진은 메모리 유지 (재시도 가능하도록)
+                            memoryKeptCount++;
+                            console.log(`   ⚠️ 메모리 유지 (업로드 실패): ${photo.fileName || '사진'}`);
                         }
-                        photo.image = null;
-                        // photo.imageData는 유지 (사진 모달에서 사용 가능하도록)
-                        // 메모리 절약이 필요하면 주석 해제: photo.imageData = null;
                     });
+                    
+                    if (memoryFreedCount > 0) {
+                        console.log(`✅ 메모리 해제 완료: ${memoryFreedCount}개 사진`);
+                    }
+                    
+                    // 업로드 실패한 사진이 있는지 확인
+                    const stillFailedPhotos = this.photos.filter(p => !p.uploaded && p.imageData);
+                    if (stillFailedPhotos.length > 0) {
+                        console.warn(`⚠️ 메모리 유지 (업로드 실패): ${stillFailedPhotos.length}개 사진`);
+                        // ⚠️ 업로드 실패한 사진이 있으면 자동 재시도 예약
+                        // 단, autoSavePending이 있으면 재시도하지 않음 (중복 방지)
+                        if (!this.autoSavePending) {
+                            this.scheduleAutoRetry();
+                        } else {
+                            console.log('   ⏭️ 자동 재시도 스킵 (autoSavePending이 처리 예정)');
+                        }
+                    } else {
+                        // 모든 사진 업로드 완료 시 자동 재시도 취소 및 재시도 횟수 초기화
+                        this.cancelAutoRetry();
+                    }
+                    
                     this.metadataDirty = false;
                     console.log('✅ 자동 저장 완료');
                     this.showToast('✅ 저장 완료');
@@ -4961,8 +5000,12 @@ class DxfPhotoEditor {
                     // 사진 업로드 완료 후 즉시 마커 색상이 변경되도록
                     this.redraw();
                 } else {
+                    // 전체 저장 실패: 모든 사진의 메모리 유지 (재시도 가능하도록)
                     console.error('❌ 자동 저장 실패 (false 반환)');
+                    console.warn('⚠️ 모든 사진의 메모리 유지 (재시도 가능하도록)');
                     this.showToast('⚠️ 저장 실패');
+                    // ⚠️ 전체 저장 실패 시에도 자동 재시도 예약
+                    this.scheduleAutoRetry();
                 }
             } else {
                 console.log('⏭️ 새로운 사진/메타데이터 변경 없음 - 업로드 스킵');
@@ -4971,6 +5014,9 @@ class DxfPhotoEditor {
             console.error('❌ 자동 저장 오류:', error);
             if (error && /로그인/.test(error.message || '')) {
                 this.showToast('로그인이 만료되었습니다. Google Drive 버튼으로 다시 로그인하세요.');
+            } else {
+                // 로그인 오류가 아닌 경우에만 자동 재시도 (로그인 오류는 사용자 개입 필요)
+                this.scheduleAutoRetry();
             }
             this.showToast(`⚠️ 저장 실패: ${error.message}`);
         } finally {
@@ -4980,6 +5026,16 @@ class DxfPhotoEditor {
             if (this.autoSavePending) {
                 console.log('🔄 대기 중인 사진 저장 시작...');
                 this.autoSavePending = false; // 플래그 초기화
+                
+                // ⚠️ 중요: autoSavePending이 실행되면 scheduleAutoRetry() 취소
+                // autoSavePending이 이미 실패한 사진을 포함해서 업로드 시도하기 때문
+                // 중복 업로드 방지
+                if (this.autoRetryTimeout) {
+                    console.log('   ⏭️ 자동 재시도 취소 (autoSavePending이 처리함)');
+                    clearTimeout(this.autoRetryTimeout);
+                    this.autoRetryTimeout = null;
+                }
+                
                 // 약간의 지연 후 재실행 (메타데이터 업데이트 시간 확보)
                 setTimeout(() => {
                     this.autoSave(true).catch(error => {
@@ -4988,6 +5044,64 @@ class DxfPhotoEditor {
                 }, 500);
             }
         }
+    }
+    
+    /**
+     * 업로드 실패한 사진 자동 재시도 예약
+     * 점진적 백오프(Exponential Backoff) 방식으로 재시도 간격 증가
+     */
+    scheduleAutoRetry() {
+        // 이미 재시도가 예약되어 있으면 취소
+        if (this.autoRetryTimeout) {
+            clearTimeout(this.autoRetryTimeout);
+            this.autoRetryTimeout = null;
+        }
+        
+        // 업로드 실패한 사진이 있는지 확인
+        const failedPhotos = this.photos.filter(p => !p.uploaded && p.imageData);
+        if (failedPhotos.length === 0) {
+            // 재시도할 사진이 없으면 재시도 횟수 초기화
+            this.autoRetryAttempts.clear();
+            return;
+        }
+        
+        // Google Drive 파일이 없으면 재시도하지 않음
+        if (!window.currentDriveFile) {
+            console.log('⏭️ 자동 재시도 스킵: Google Drive 파일이 없습니다');
+            return;
+        }
+        
+        // 재시도 횟수에 따라 지연 시간 계산 (점진적 백오프)
+        // 첫 번째 재시도: 5초, 두 번째: 10초, 세 번째: 20초, 네 번째: 40초, 최대 60초
+        const attemptCount = this.autoRetryAttempts.get('global') || 0;
+        const delay = Math.min(this.autoRetryDelay * Math.pow(2, attemptCount), this.autoRetryMaxDelay);
+        
+        console.log(`🔄 자동 재시도 예약: ${failedPhotos.length}개 사진, ${delay / 1000}초 후 재시도 (시도 횟수: ${attemptCount + 1})`);
+        
+        this.autoRetryTimeout = setTimeout(() => {
+            this.autoRetryTimeout = null;
+            this.autoRetryAttempts.set('global', attemptCount + 1);
+            
+            // 재시도 실행
+            console.log(`🔄 자동 재시도 시작: ${failedPhotos.length}개 사진`);
+            this.autoSave(true).catch(error => {
+                console.error('❌ 자동 재시도 오류:', error);
+                // 재시도 실패 시 다시 예약 (최대 횟수 제한 없음)
+                this.scheduleAutoRetry();
+            });
+        }, delay);
+    }
+    
+    /**
+     * 자동 재시도 취소 (모든 사진 업로드 완료 시)
+     */
+    cancelAutoRetry() {
+        if (this.autoRetryTimeout) {
+            clearTimeout(this.autoRetryTimeout);
+            this.autoRetryTimeout = null;
+            console.log('✅ 자동 재시도 취소됨 (모든 사진 업로드 완료)');
+        }
+        this.autoRetryAttempts.clear();
     }
     
     /**
