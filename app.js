@@ -925,18 +925,42 @@ class DxfPhotoEditor {
     
     setupEventListeners() {
         // Google Drive 로그인 버튼
-        document.getElementById('login-btn').addEventListener('click', async () => {
-            await this.handleLogin();
-        });
+        const loginBtn = document.getElementById('login-btn');
+        if (loginBtn) {
+            console.log('✅ login-btn 요소 발견, 이벤트 리스너 등록 중...');
+            const loginHandler = async (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                console.log('🔑 Google Drive 로그인 버튼 클릭됨');
+                await this.handleLogin();
+            };
+            this.addTrackedEventListener(loginBtn, 'click', loginHandler);
+            // 터치 이벤트도 추가 (모바일 대응)
+            this.addTrackedEventListener(loginBtn, 'touchend', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                console.log('🔑 Google Drive 로그인 버튼 터치됨');
+                this.handleLogin();
+            }, { passive: false });
+            console.log('✅ login-btn 이벤트 리스너 등록 완료');
+        } else {
+            console.error('❌ login-btn 요소를 찾을 수 없습니다');
+        }
         
         // 로컬 저장소 버튼 (로컬 파일 선택)
-        document.getElementById('local-file-input').addEventListener('change', async (e) => {
-            if (e.target.files[0]) {
-                this.showViewer();  // 먼저 화면 전환
-                await this.loadDxfFile(e.target.files[0]);
-                e.target.value = ''; // 초기화
-            }
-        });
+        const localFileInput = document.getElementById('local-file-input');
+        if (localFileInput) {
+            const localFileHandler = async (e) => {
+                if (e.target.files[0]) {
+                    this.showViewer();  // 먼저 화면 전환
+                    await this.loadDxfFile(e.target.files[0]);
+                    e.target.value = ''; // 초기화
+                }
+            };
+            this.addTrackedEventListener(localFileInput, 'change', localFileHandler);
+        } else {
+            console.error('❌ local-file-input 요소를 찾을 수 없습니다');
+        }
         
         // 햄버거 메뉴 토글
         const hamburgerBtn = document.getElementById('hamburger-btn');
@@ -2124,9 +2148,15 @@ class DxfPhotoEditor {
     
     setLoginButtonState(isLoggedIn) {
         const btn = document.getElementById('login-btn');
-        if (!btn) return;
+        if (!btn) {
+            console.warn('⚠️ login-btn 요소를 찾을 수 없습니다 (setLoginButtonState)');
+            return;
+        }
         btn.textContent = isLoggedIn ? '✅ 로그인됨' : '🔐 Google Drive';
         btn.style.background = isLoggedIn ? '#34C759' : '#4285F4';
+        btn.disabled = false; // 버튼 활성화 보장
+        btn.style.pointerEvents = 'auto'; // 클릭 가능하도록 보장
+        btn.style.opacity = '1'; // 투명도 보장
     }
 
     setupPhotoMemoInlineEditing() {
