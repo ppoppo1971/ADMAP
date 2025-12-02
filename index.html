@@ -1229,27 +1229,47 @@ DMAP - DXF 도면 사진 편집기 (UI)
                     appScriptSrc += '?v=' + cacheBuster;
                 }
                 
-                // Google Drive 스크립트 로드
+                // Google Drive 스크립트를 먼저 로드하고, 완료 후 앱 스크립트 로드
                 const driveScript = document.createElement('script');
                 driveScript.src = driveScriptSrc;
-                document.head.appendChild(driveScript);
                 
-                // 앱 스크립트 로드 (defer)
-                const appScript = document.createElement('script');
-                appScript.src = appScriptSrc;
-                appScript.defer = true;
-                document.head.appendChild(appScript);
+                // Google Drive 스크립트 로드 완료 후 앱 스크립트 로드
+                driveScript.onload = function() {
+                    console.log('✅ google-drive.js 로드 완료');
+                    // Google Identity Services가 로드될 때까지 약간 대기
+                    setTimeout(function() {
+                        const appScript = document.createElement('script');
+                        appScript.src = appScriptSrc;
+                        appScript.defer = true;
+                        document.head.appendChild(appScript);
+                        console.log('✅ app.js 로드 시작');
+                    }, 100);
+                };
+                
+                driveScript.onerror = function() {
+                    console.error('❌ google-drive.js 로드 실패');
+                    // 오류 시에도 앱 스크립트는 로드 시도
+                    const appScript = document.createElement('script');
+                    appScript.src = appScriptSrc;
+                    appScript.defer = true;
+                    document.head.appendChild(appScript);
+                };
+                
+                document.head.appendChild(driveScript);
             } catch (error) {
                 console.warn('⚠️ 캐시 무시 로직 오류, 일반 로드:', error);
-                // 오류 시 일반 로드
+                // 오류 시 일반 로드 (순서 보장)
                 const driveScript = document.createElement('script');
                 driveScript.src = 'google-drive.js';
+                driveScript.onload = function() {
+                    setTimeout(function() {
+                        const appScript = document.createElement('script');
+                        appScript.src = 'app.js';
+                        appScript.defer = true;
+                        document.head.appendChild(appScript);
+                    }, 100);
+                };
                 document.head.appendChild(driveScript);
-                
-                const appScript = document.createElement('script');
-                appScript.src = 'app.js';
-                appScript.defer = true;
-                document.head.appendChild(appScript);
             }
         })();
     </script>

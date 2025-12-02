@@ -693,9 +693,14 @@ class DxfPhotoEditor {
     
     setupEventListeners() {
         // Google Drive 로그인 버튼
-        document.getElementById('login-btn').addEventListener('click', async () => {
-            await this.handleLogin();
-        });
+        const loginBtn = document.getElementById('login-btn');
+        if (loginBtn) {
+            loginBtn.addEventListener('click', async () => {
+                await this.handleLogin();
+            });
+        } else {
+            console.warn('⚠️ login-btn 요소를 찾을 수 없습니다');
+        }
         
         // 로컬 저장소 버튼 (로컬 파일 선택)
         document.getElementById('local-file-input').addEventListener('change', async (e) => {
@@ -6274,6 +6279,17 @@ async function waitForDriveReady(timeoutMs = 5000) {
 async function startApp() {
     console.log('📱 앱 시작...');
     
+    // DOM이 완전히 로드되었는지 확인
+    if (document.readyState === 'loading') {
+        await new Promise(resolve => {
+            if (document.readyState === 'complete') {
+                resolve();
+            } else {
+                document.addEventListener('DOMContentLoaded', resolve);
+            }
+        });
+    }
+    
     // Google Drive Manager가 준비될 때까지 대기 (최대 5초)
     let retries = 0;
     while (!window.driveManager && retries < 50) {
@@ -6312,5 +6328,15 @@ async function startApp() {
     }
 }
 
-document.addEventListener('DOMContentLoaded', startApp);
+// DOMContentLoaded 또는 이미 로드된 경우 실행
+// 동적으로 로드된 스크립트이므로 약간의 지연 후 실행
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => {
+        // DOM이 로드된 후 약간의 지연을 두어 다른 스크립트들이 완전히 로드되도록 함
+        setTimeout(startApp, 100);
+    });
+} else {
+    // 이미 로드된 경우 약간의 지연 후 실행
+    setTimeout(startApp, 100);
+}
 
