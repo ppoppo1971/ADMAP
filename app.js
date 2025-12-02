@@ -205,12 +205,12 @@ class DxfPhotoEditor {
             this.updateViewBox();
         }, 16); // ~60fps
         
+        // 이벤트 리스너 추적 (메모리 누수 방지) - setupVisibilityListener 호출 전에 초기화 필요
+        this.eventListeners = []; // { element, event, handler, options }
+        
         // 백그라운드 모드 최적화
         this.pauseAutoSave = false;
         this.setupVisibilityListener();
-        
-        // 이벤트 리스너 추적 (메모리 누수 방지)
-        this.eventListeners = []; // { element, event, handler, options }
         
         this.init();
     }
@@ -224,6 +224,13 @@ class DxfPhotoEditor {
             console.warn('⚠️ 이벤트 리스너 등록 실패: 요소가 null입니다', event);
             return;
         }
+        
+        // eventListeners 배열이 초기화되지 않았으면 초기화
+        if (!this.eventListeners) {
+            console.warn('⚠️ eventListeners 배열이 초기화되지 않았습니다. 자동 초기화합니다.');
+            this.eventListeners = [];
+        }
+        
         element.addEventListener(event, handler, options);
         this.eventListeners.push({ element, event, handler, options });
     }
