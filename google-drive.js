@@ -521,6 +521,11 @@ class GoogleDriveManager {
         );
 
         if (!response.ok) {
+            // 404 (Not Found)는 이미 삭제된 것으로 간주하고 성공 처리
+            if (response.status === 404) {
+                console.log('   ℹ️ 파일이 이미 삭제되었거나 존재하지 않음 (404)');
+                return true;
+            }
             throw new Error(`파일 삭제 실패: ${response.statusText}`);
         }
 

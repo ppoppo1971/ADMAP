@@ -4725,18 +4725,35 @@ class DxfPhotoEditor {
         
         try {
             // Google Drive에서 사진 파일 삭제
+            let driveDeleteSuccess = true;
+            let driveDeleteError = null;
+            
             if (window.currentDriveFile && window.deletePhotoFromDrive && photoToDelete.uploaded) {
                 this.showToast('🗑️ 삭제 중...');
                 const baseName = this.getDxfBaseName();
                 const photoFileName = photoToDelete.fileName || `${baseName}_photo_${photoIndex + 1}.jpg`;
                 
                 console.log('   Google Drive에서 삭제:', photoFileName);
-                await window.deletePhotoFromDrive(photoFileName);
-                console.log('   ✅ Google Drive 삭제 완료');
+                try {
+                    await window.deletePhotoFromDrive(photoFileName);
+                    console.log('   ✅ Google Drive 삭제 완료');
+                } catch (error) {
+                    console.error('   ⚠️ Google Drive 삭제 오류:', error);
+                    driveDeleteError = error;
+                    // "not found" 또는 "404" 오류는 이미 삭제된 것으로 간주
+                    const errorMessage = error.message || '';
+                    if (errorMessage.includes('not found') || errorMessage.includes('404') || errorMessage.includes('Not Found')) {
+                        console.log('   ℹ️ 파일이 이미 삭제되었거나 존재하지 않음 - 계속 진행');
+                        driveDeleteSuccess = true; // 이미 삭제된 것으로 간주
+                    } else {
+                        driveDeleteSuccess = false;
+                    }
+                }
             }
             
             // 로컬 배열에서 제거 (메모리 정리)
-            // 명시적 메모리 해제
+            // ⚠️ 중요: Google Drive 삭제 성공 여부와 관계없이 로컬에서 제거
+            // (파일이 이미 삭제되었거나 존재하지 않아도 로컬에서는 제거해야 함)
             if (photoToDelete.image && photoToDelete.image.src) {
                 photoToDelete.image.src = ''; // Image 객체 메모리 해제
             }
@@ -4751,7 +4768,13 @@ class DxfPhotoEditor {
             // 메타데이터 업데이트 (사진 삭제는 즉시 저장)
             await this.autoSave(true); // force=true: 즉시 저장
             
-            this.showToast('✅ 사진 삭제 완료');
+            // Google Drive 삭제 결과에 따라 메시지 표시
+            if (driveDeleteSuccess) {
+                this.showToast('✅ 사진 삭제 완료');
+            } else {
+                // Google Drive 삭제 실패했지만 로컬 삭제는 완료
+                this.showToast('✅ 사진 삭제 완료 (Google Drive 삭제 실패: ' + (driveDeleteError?.message || '알 수 없는 오류') + ')');
+            }
             console.log('✅ 사진 삭제 완료:', photoToDelete.id);
         } catch (error) {
             console.error('❌ 사진 삭제 실패:', error);
