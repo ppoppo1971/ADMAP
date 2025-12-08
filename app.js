@@ -146,6 +146,7 @@ class DxfPhotoEditor {
         this.currentLocationMarker = null; // 현재 위치 마커
         this.currentLocationInfoWindow = null; // 현재 위치 정보창
         this.mapLocationInfoWindowClickListener = null; // 지도 클릭 리스너 (정보창 닫기용)
+        this.mapLocationInfoWindowContainerListeners = null; // 지도 컨테이너 클릭/터치 리스너
         
         // 렌더링 최적화
         this.redrawPending = false;
@@ -5911,12 +5912,31 @@ class DxfPhotoEditor {
             this.currentLocationInfoWindow.close();
             this.currentLocationInfoWindow = null;
         }
-        // 지도 클릭 리스너 제거
+        // 모든 리스너 제거
+        this.removeLocationInfoWindowListeners();
+        this.currentLocationData = null;
+    }
+    
+    /**
+     * 현재 위치 정보창 관련 리스너 제거
+     */
+    removeLocationInfoWindowListeners() {
+        // Google Maps 클릭 리스너 제거
         if (this.mapLocationInfoWindowClickListener && this.map) {
             google.maps.event.removeListener(this.mapLocationInfoWindowClickListener);
             this.mapLocationInfoWindowClickListener = null;
         }
-        this.currentLocationData = null;
+        
+        // 지도 컨테이너 클릭/터치 리스너 제거
+        if (this.mapLocationInfoWindowContainerListeners && this.mapContainer) {
+            if (this.mapLocationInfoWindowContainerListeners.click) {
+                this.mapContainer.removeEventListener('click', this.mapLocationInfoWindowContainerListeners.click, true);
+            }
+            if (this.mapLocationInfoWindowContainerListeners.touchend) {
+                this.mapContainer.removeEventListener('touchend', this.mapLocationInfoWindowContainerListeners.touchend, true);
+            }
+            this.mapLocationInfoWindowContainerListeners = null;
+        }
     }
     
     /**
@@ -6218,17 +6238,56 @@ class DxfPhotoEditor {
             }
         });
         
-        // 기존 리스너 제거 후 새로 등록 (중복 방지)
-        if (this.mapLocationInfoWindowClickListener) {
-            google.maps.event.removeListener(this.mapLocationInfoWindowClickListener);
-        }
+        // 기존 리스너 제거
+        this.removeLocationInfoWindowListeners();
         
-        // 지도 클릭 시 정보창 닫기
-        this.mapLocationInfoWindowClickListener = this.map.addListener('click', (e) => {
-            // 마커 클릭이 아닌 지도 영역 클릭인지 확인
+        // InfoWindow가 열려있을 때 지도 외부 클릭 감지
+        // 방법 1: Google Maps 클릭 이벤트
+        this.mapLocationInfoWindowClickListener = google.maps.event.addListener(this.map, 'click', (e) => {
+            // InfoWindow 내부 클릭이 아닌 경우에만 닫기
             if (this.currentLocationInfoWindow) {
                 this.currentLocationInfoWindow.close();
             }
+        });
+        
+        // 방법 2: 지도 컨테이너 클릭 이벤트 (모바일 터치 지원, 더 확실한 방법)
+        const handleMapContainerClick = (e) => {
+            // InfoWindow가 열려있지 않으면 무시
+            if (!this.currentLocationInfoWindow) {
+                return;
+            }
+            
+            // InfoWindow 내부 클릭인지 확인
+            const clickedElement = e.target;
+            const infoWindowElement = document.querySelector('.gm-style-iw');
+            const infoWindowParent = document.querySelector('.gm-style-iw-d');
+            
+            // InfoWindow 내부 또는 관련 요소 클릭이면 무시
+            if (infoWindowElement && (infoWindowElement.contains(clickedElement) || clickedElement.closest('.gm-style-iw'))) {
+                return;
+            }
+            if (infoWindowParent && (infoWindowParent.contains(clickedElement) || clickedElement.closest('.gm-style-iw-d'))) {
+                return;
+            }
+            
+            // InfoWindow 외부 클릭이면 닫기
+            console.log('📍 지도 영역 클릭 감지, 정보창 닫기');
+            this.currentLocationInfoWindow.close();
+        };
+        
+        // 클릭 및 터치 이벤트 등록
+        if (this.mapContainer) {
+            this.mapContainer.addEventListener('click', handleMapContainerClick, true);
+            this.mapContainer.addEventListener('touchend', handleMapContainerClick, true);
+            this.mapLocationInfoWindowContainerListeners = {
+                click: handleMapContainerClick,
+                touchend: handleMapContainerClick
+            };
+        }
+        
+        // InfoWindow가 닫힐 때 리스너 제거
+        google.maps.event.addListenerOnce(this.currentLocationInfoWindow, 'closeclick', () => {
+            this.removeLocationInfoWindowListeners();
         });
         
         try {
