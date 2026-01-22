@@ -3123,7 +3123,7 @@ class DxfPhotoEditor {
             ? entity.constantWidth
             : 0;
         const actualWidth = Math.max(lineweight >= 0 ? lineweight : 0, constantWidth);
-        const strokeWidth = (actualWidth > 0) ? 2 : 0.5;
+        const strokeWidth = (actualWidth > 0) ? 2 : 0.75;
         
         // 디버그용 데이터 속성 추가
         line.setAttribute('data-lineweight', entity.lineweight);
@@ -3179,7 +3179,7 @@ class DxfPhotoEditor {
             ? entity.constantWidth
             : 0;
         const actualWidth = Math.max(lineweight >= 0 ? lineweight : 0, constantWidth);
-        const strokeWidth = (actualWidth > 0) ? 2 : 0.5;
+        const strokeWidth = (actualWidth > 0) ? 2 : 0.75;
         
         // 디버그용 데이터 속성 추가
         element.setAttribute('data-lineweight', entity.lineweight);
@@ -3214,7 +3214,7 @@ class DxfPhotoEditor {
             ? entity.constantWidth
             : 0;
         const actualWidth = Math.max(lineweight >= 0 ? lineweight : 0, constantWidth);
-        const strokeWidth = (actualWidth > 0) ? 2 : 0.5;
+        const strokeWidth = (actualWidth > 0) ? 2 : 0.75;
         circle.setAttribute('style', `stroke-width: ${strokeWidth}; vector-effect: non-scaling-stroke;`);
         
         return circle;
@@ -3248,7 +3248,7 @@ class DxfPhotoEditor {
             ? entity.constantWidth
             : 0;
         const actualWidth = Math.max(lineweight >= 0 ? lineweight : 0, constantWidth);
-        const strokeWidth = (actualWidth > 0) ? 2 : 0.5;
+        const strokeWidth = (actualWidth > 0) ? 2 : 0.75;
         path.setAttribute('style', `stroke-width: ${strokeWidth}; vector-effect: non-scaling-stroke;`);
         
         return path;
@@ -3442,7 +3442,7 @@ class DxfPhotoEditor {
             ? entity.constantWidth
             : 0;
         const actualWidth = Math.max(lineweight >= 0 ? lineweight : 0, constantWidth);
-        const strokeWidth = (actualWidth > 0) ? 2 : 0.5;
+        const strokeWidth = (actualWidth > 0) ? 2 : 0.75;
         polyline.setAttribute('style', `stroke-width: ${strokeWidth}; vector-effect: non-scaling-stroke;`);
         
         return polyline;
@@ -3475,7 +3475,7 @@ class DxfPhotoEditor {
             ? entity.constantWidth
             : 0;
         const actualWidth = Math.max(lineweight >= 0 ? lineweight : 0, constantWidth);
-        const strokeWidth = (actualWidth > 0) ? 2 : 0.5;
+        const strokeWidth = (actualWidth > 0) ? 2 : 0.75;
         ellipse.setAttribute('style', `stroke-width: ${strokeWidth}; vector-effect: non-scaling-stroke;`);
         
         return ellipse;
