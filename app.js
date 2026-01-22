@@ -181,19 +181,16 @@ class DxfPhotoEditor {
         this.platform = this.detectPlatform();
         this.isIOS = this.platform === 'ios';
         this.isAndroid = this.platform === 'android';
+        this.lowPowerMode = this.isAndroid
+            ? localStorage.getItem('dmap:lowPowerMode') === 'true'
+            : false;
         
         console.log(`📱 플랫폼 감지: ${this.platform}`);
-        
-        // ViewBox 업데이트 Throttle
-        // Android에서는 프레임 간격을 넓혀 스크롤/줌 부드러움 개선
-        const viewBoxThrottleMs = this.isAndroid ? 80 : 16; // Android ~12.5fps, iOS ~60fps
-        this.updateViewBoxThrottled = this.throttle(() => {
-            this.updateViewBox();
-        }, viewBoxThrottleMs);
         
         // Android 전용 렌더링 간격 (더 강한 최적화)
         this.androidViewBoxIntervalMs = 80; // 핀치/이동 ViewBox 업데이트 간격
         this.androidPhotoDrawIntervalMs = 200; // 사진 마커 렌더링 간격
+        this.setPerformanceMode(this.lowPowerMode);
         
         this.init();
     }
@@ -209,6 +206,26 @@ class DxfPhotoEditor {
             return 'android';
         }
         return 'desktop';
+    }
+
+    /**
+     * Android 저사양 모드 적용
+     */
+    setPerformanceMode(enableLowPower) {
+        if (!this.isAndroid) {
+            this.updateViewBoxThrottled = this.throttle(() => {
+                this.updateViewBox();
+            }, 16);
+            return;
+        }
+        this.lowPowerMode = !!enableLowPower;
+        localStorage.setItem('dmap:lowPowerMode', this.lowPowerMode ? 'true' : 'false');
+        const viewBoxThrottleMs = this.lowPowerMode ? 120 : 80; // 저사양: ~8fps
+        this.androidViewBoxIntervalMs = this.lowPowerMode ? 120 : 80;
+        this.androidPhotoDrawIntervalMs = this.lowPowerMode ? 240 : 200;
+        this.updateViewBoxThrottled = this.throttle(() => {
+            this.updateViewBox();
+        }, viewBoxThrottleMs);
     }
 
     debugLog(...args) {
@@ -341,7 +358,7 @@ class DxfPhotoEditor {
             : 0;
         const actualWidth = Math.max(lineweight, constantWidth);
         const baseWidth = (actualWidth > 0) ? 2 : 0.5;
-        const minWidth = this.isAndroid ? 1.2 : 0.5;
+        const minWidth = 0.5;
         return Math.max(baseWidth, minWidth);
     }
 
@@ -349,7 +366,7 @@ class DxfPhotoEditor {
      * SVG vector-effect 설정 (Android는 확대 시 선 두께가 함께 커지도록)
      */
     getVectorEffectValue() {
-        return this.isAndroid ? 'none' : 'non-scaling-stroke';
+        return 'non-scaling-stroke';
     }
     
     autocadColorIndexToHex(colorIndex) {
@@ -626,7 +643,7 @@ class DxfPhotoEditor {
         
         // 플랫폼별 UI 조정
         if (this.isAndroid) {
-            // Android: 내보내기/자료삭제 버튼 표시
+            // Android: 내보내기/자료삭제/저사양 버튼 표시
             const exportBtn = document.getElementById('menu-export-to-download');
             if (exportBtn) {
                 exportBtn.style.display = 'block';
@@ -635,8 +652,13 @@ class DxfPhotoEditor {
             if (deleteBtn) {
                 deleteBtn.style.display = 'block';
             }
+            const lowPowerBtn = document.getElementById('menu-low-power');
+            if (lowPowerBtn) {
+                lowPowerBtn.style.display = 'block';
+                lowPowerBtn.textContent = `🔋 저사양 모드: ${this.lowPowerMode ? 'ON' : 'OFF'}`;
+            }
         } else {
-            // iOS/데스크탑: 내보내기/자료삭제 버튼 숨김
+            // iOS/데스크탑: 내보내기/자료삭제/저사양 버튼 숨김
             const exportBtn = document.getElementById('menu-export-to-download');
             if (exportBtn) {
                 exportBtn.style.display = 'none';
@@ -644,6 +666,10 @@ class DxfPhotoEditor {
             const deleteBtn = document.getElementById('menu-delete-local');
             if (deleteBtn) {
                 deleteBtn.style.display = 'none';
+            }
+            const lowPowerBtn = document.getElementById('menu-low-power');
+            if (lowPowerBtn) {
+                lowPowerBtn.style.display = 'none';
             }
         }
     }
@@ -820,6 +846,7 @@ class DxfPhotoEditor {
         const menuConsoleBtn = document.getElementById('menu-console');
         const menuExportBtn = document.getElementById('menu-export-to-download');
         const menuDeleteBtn = document.getElementById('menu-delete-local');
+        const menuLowPowerBtn = document.getElementById('menu-low-power');
         
         console.log('🔍 슬라이딩 메뉴 버튼 확인:', {
             menuBackBtn: !!menuBackBtn,
@@ -828,7 +855,8 @@ class DxfPhotoEditor {
             menuImageSizeBtn: !!menuImageSizeBtn,
             menuConsoleBtn: !!menuConsoleBtn,
             menuExportBtn: !!menuExportBtn,
-            menuDeleteBtn: !!menuDeleteBtn
+            menuDeleteBtn: !!menuDeleteBtn,
+            menuLowPowerBtn: !!menuLowPowerBtn
         });
         
         if (menuBackBtn) {
@@ -978,6 +1006,19 @@ class DxfPhotoEditor {
             console.warn('⚠️ menu-delete-local 버튼을 찾을 수 없습니다!');
         }
 
+        if (menuLowPowerBtn) {
+            menuLowPowerBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.closeSlideMenu();
+                const next = !this.lowPowerMode;
+                this.setPerformanceMode(next);
+                menuLowPowerBtn.textContent = `🔋 저사양 모드: ${this.lowPowerMode ? 'ON' : 'OFF'}`;
+                this.showToast(`저사양 모드 ${this.lowPowerMode ? 'ON' : 'OFF'}`);
+            });
+        } else {
+            console.warn('⚠️ menu-low-power 버튼을 찾을 수 없습니다!');
+        }
+
         const closeLocalDeleteBtn = document.getElementById('close-local-delete');
         if (closeLocalDeleteBtn) {
             closeLocalDeleteBtn.addEventListener('click', () => {
@@ -986,7 +1027,7 @@ class DxfPhotoEditor {
         }
         
         // 메뉴 아이템들 터치 이벤트에서 롱프레스 방지
-        [menuBackBtn, menuFitViewBtn, menuCheckMissingBtn, menuImageSizeBtn, menuMapGoogleBtn, menuMapVworldBtn, menuConsoleBtn, menuExportBtn, menuDeleteBtn].forEach(btn => {
+        [menuBackBtn, menuFitViewBtn, menuCheckMissingBtn, menuImageSizeBtn, menuMapGoogleBtn, menuMapVworldBtn, menuConsoleBtn, menuExportBtn, menuDeleteBtn, menuLowPowerBtn].forEach(btn => {
             if (btn) {
                 btn.addEventListener('touchstart', (e) => {
                     e.stopPropagation();
@@ -5463,29 +5504,9 @@ class DxfPhotoEditor {
         }
         // 메타데이터 재생성 (남은 사진 기준)
         const remainingPhotos = (await window.localStorageManager.loadPhotos(this.dxfFileName)) || [];
-        const metadata = await window.localStorageManager.loadMetadata(this.dxfFileName);
-        const texts = metadata?.texts || this.texts || [];
-        
-        if (remainingPhotos.length === 0 && (!texts || texts.length === 0)) {
-            // 사진/텍스트가 없으면 메타데이터도 삭제
-            await window.localStorageManager.deleteMetadata(this.dxfFileName);
-        } else {
-            const rebuilt = {
-                dxfFile: this.dxfFileName,
-                photos: remainingPhotos.map(photo => ({
-                    id: photo.id,
-                    fileName: photo.fileName,
-                    position: { x: photo.x, y: photo.y },
-                    size: { width: photo.width, height: photo.height },
-                    memo: photo.memo || '',
-                    savedAt: photo.savedAt || Date.now(),
-                    uploaded: true
-                })),
-                texts,
-                lastModified: new Date().toISOString()
-            };
-            await window.localStorageManager.saveMetadata(this.dxfFileName, rebuilt);
-        }
+        // 날짜 삭제 시 메타데이터 파일 자체도 삭제
+        await window.localStorageManager.deleteMetadata(this.dxfFileName);
+        this.texts = [];
         // 화면 상태 업데이트
         const deleteIds = new Set(toDelete.map(p => p.id));
         this.photos = this.photos.filter(photo => !deleteIds.has(photo.id));
