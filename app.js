@@ -75,17 +75,6 @@ class DxfPhotoEditor {
         this.offsetX = 0;
         this.offsetY = 0;
         
-        // Transform 기반 부드러운 이동/확대 (구글맵 방식)
-        this.transform = {
-            x: 0,           // 이동량 (px)
-            y: 0,           // 이동량 (px)
-            scale: 1,       // 확대 비율
-            originX: 0,     // 확대 중심점 X
-            originY: 0      // 확대 중심점 Y
-        };
-        this.isTransforming = false; // transform 적용 중 여부
-        this.updatePending = false;  // requestAnimationFrame 중복 방지
-        
         // 터치/드래그 상태
         this.touchState = {
             isDragging: false,
@@ -194,20 +183,16 @@ class DxfPhotoEditor {
         
         console.log(`📱 플랫폼 감지: ${this.platform}`);
         
-        // Android 전용 렌더링 간격
+        // ViewBox 업데이트 Throttle
+        // Android에서는 프레임 간격을 넓혀 스크롤/줌 부드러움 개선
+        const viewBoxThrottleMs = this.isAndroid ? 80 : 16; // Android ~12.5fps, iOS ~60fps
+        this.updateViewBoxThrottled = this.throttle(() => {
+            this.updateViewBox();
+        }, viewBoxThrottleMs);
+        
+        // Android 전용 렌더링 간격 (더 강한 최적화)
         this.androidViewBoxIntervalMs = 80; // 핀치/이동 ViewBox 업데이트 간격
         this.androidPhotoDrawIntervalMs = 200; // 사진 마커 렌더링 간격
-        
-        // 플랫폼별 ViewBox 업데이트 throttle 설정
-        if (this.isAndroid) {
-            this.updateViewBoxThrottled = this.throttle(() => {
-                this.updateViewBox();
-            }, 80);
-        } else {
-            this.updateViewBoxThrottled = this.throttle(() => {
-                this.updateViewBox();
-            }, 16);
-        }
         
         this.init();
     }
@@ -230,48 +215,6 @@ class DxfPhotoEditor {
             return;
         }
         console.log(...args);
-    }
-    
-    /**
-     * SVG Transform 적용 (구글맵 방식 부드러운 이동/확대)
-     * 드래그/핀치 중에는 CSS transform만 변경하여 60fps 부드러운 반응
-     */
-    applyTransform() {
-        if (!this.isTransforming) return;
-        
-        const { x, y, scale, originX, originY } = this.transform;
-        
-        // SVG 그룹에 transform 적용
-        const transformStr = `translate(${x}px, ${y}px) scale(${scale})`;
-        this.svgGroup.style.transform = transformStr;
-        this.svgGroup.style.transformOrigin = `${originX}px ${originY}px`;
-        
-        // Canvas도 동일하게 transform
-        this.canvas.style.transform = transformStr;
-        this.canvas.style.transformOrigin = `${originX}px ${originY}px`;
-    }
-    
-    /**
-     * Transform 초기화 및 ViewBox 최종 업데이트
-     * 터치/드래그 종료 시 호출하여 정확한 좌표로 확정
-     */
-    resetTransform() {
-        if (!this.isTransforming) return;
-        
-        // Transform 초기화
-        this.svgGroup.style.transform = '';
-        this.svgGroup.style.transformOrigin = '';
-        this.canvas.style.transform = '';
-        this.canvas.style.transformOrigin = '';
-        
-        this.transform = { x: 0, y: 0, scale: 1, originX: 0, originY: 0 };
-        this.isTransforming = false;
-        
-        // ViewBox 최종 업데이트
-        this.updateViewBox();
-        
-        // Canvas 사진 마커 최종 렌더링
-        this.drawPhotosCanvas();
     }
     
     /**
@@ -384,6 +327,22 @@ class DxfPhotoEditor {
         return color;
     }
 
+    /**
+     * 엔티티 선 굵기 계산 (Android 최소 굵기 보정)
+     */
+    getEntityStrokeWidth(entity) {
+        const lineweightRaw = entity?.lineweight;
+        const lineweight = (lineweightRaw !== undefined && lineweightRaw !== null && lineweightRaw >= 0)
+            ? lineweightRaw
+            : 0;
+        const constantWidth = (entity?.constantWidth !== undefined && entity?.constantWidth !== null)
+            ? entity.constantWidth
+            : 0;
+        const actualWidth = Math.max(lineweight, constantWidth);
+        const baseWidth = (actualWidth > 0) ? 2 : 0.5;
+        const minWidth = this.isAndroid ? 1 : 0.5;
+        return Math.max(baseWidth, minWidth);
+    }
     
     autocadColorIndexToHex(colorIndex) {
         // AutoCAD 표준 색상 팔레트 (256색)
@@ -861,8 +820,7 @@ class DxfPhotoEditor {
             menuImageSizeBtn: !!menuImageSizeBtn,
             menuConsoleBtn: !!menuConsoleBtn,
             menuExportBtn: !!menuExportBtn,
-            menuDeleteBtn: !!menuDeleteBtn,
-            menuLowPowerBtn: !!menuLowPowerBtn
+            menuDeleteBtn: !!menuDeleteBtn
         });
         
         if (menuBackBtn) {
@@ -3176,7 +3134,7 @@ class DxfPhotoEditor {
             ? entity.constantWidth
             : 0;
         const actualWidth = Math.max(lineweight >= 0 ? lineweight : 0, constantWidth);
-        const strokeWidth = (actualWidth > 0) ? 2 : 0.75;
+        const strokeWidth = this.getEntityStrokeWidth(entity);
         
         // 디버그용 데이터 속성 추가
         line.setAttribute('data-lineweight', entity.lineweight);
@@ -3232,7 +3190,7 @@ class DxfPhotoEditor {
             ? entity.constantWidth
             : 0;
         const actualWidth = Math.max(lineweight >= 0 ? lineweight : 0, constantWidth);
-        const strokeWidth = (actualWidth > 0) ? 2 : 0.75;
+        const strokeWidth = this.getEntityStrokeWidth(entity);
         
         // 디버그용 데이터 속성 추가
         element.setAttribute('data-lineweight', entity.lineweight);
@@ -3260,14 +3218,7 @@ class DxfPhotoEditor {
         circle.setAttribute('stroke', this.getEntityColor(entity)); // 실제 색상
         
         // 조건부 선 굵기: 실제 굵기가 0 초과면 2px, 아니면 0.5px
-        const lineweight = (entity.lineweight !== undefined && entity.lineweight !== null && entity.lineweight >= 0)
-            ? entity.lineweight
-            : (entity.lineweight === undefined || entity.lineweight === null ? -1 : 0);
-        const constantWidth = (entity.constantWidth !== undefined && entity.constantWidth !== null)
-            ? entity.constantWidth
-            : 0;
-        const actualWidth = Math.max(lineweight >= 0 ? lineweight : 0, constantWidth);
-        const strokeWidth = (actualWidth > 0) ? 2 : 0.75;
+        const strokeWidth = this.getEntityStrokeWidth(entity);
         circle.setAttribute('style', `stroke-width: ${strokeWidth}; vector-effect: non-scaling-stroke;`);
         
         return circle;
@@ -3294,14 +3245,7 @@ class DxfPhotoEditor {
         path.setAttribute('stroke', this.getEntityColor(entity)); // 실제 색상
         
         // 조건부 선 굵기: 실제 굵기가 0 초과면 2px, 아니면 0.5px
-        const lineweight = (entity.lineweight !== undefined && entity.lineweight !== null && entity.lineweight >= 0)
-            ? entity.lineweight
-            : (entity.lineweight === undefined || entity.lineweight === null ? -1 : 0);
-        const constantWidth = (entity.constantWidth !== undefined && entity.constantWidth !== null)
-            ? entity.constantWidth
-            : 0;
-        const actualWidth = Math.max(lineweight >= 0 ? lineweight : 0, constantWidth);
-        const strokeWidth = (actualWidth > 0) ? 2 : 0.75;
+        const strokeWidth = this.getEntityStrokeWidth(entity);
         path.setAttribute('style', `stroke-width: ${strokeWidth}; vector-effect: non-scaling-stroke;`);
         
         return path;
@@ -3488,14 +3432,7 @@ class DxfPhotoEditor {
         polyline.setAttribute('stroke', this.getEntityColor(entity)); // 실제 색상
         
         // 조건부 선 굵기: 실제 굵기가 0 초과면 2px, 아니면 0.5px
-        const lineweight = (entity.lineweight !== undefined && entity.lineweight !== null && entity.lineweight >= 0)
-            ? entity.lineweight
-            : (entity.lineweight === undefined || entity.lineweight === null ? -1 : 0);
-        const constantWidth = (entity.constantWidth !== undefined && entity.constantWidth !== null)
-            ? entity.constantWidth
-            : 0;
-        const actualWidth = Math.max(lineweight >= 0 ? lineweight : 0, constantWidth);
-        const strokeWidth = (actualWidth > 0) ? 2 : 0.75;
+        const strokeWidth = this.getEntityStrokeWidth(entity);
         polyline.setAttribute('style', `stroke-width: ${strokeWidth}; vector-effect: non-scaling-stroke;`);
         
         return polyline;
@@ -3521,14 +3458,7 @@ class DxfPhotoEditor {
         ellipse.setAttribute('stroke', this.getEntityColor(entity)); // 실제 색상
         
         // 조건부 선 굵기: 실제 굵기가 0 초과면 2px, 아니면 0.5px
-        const lineweight = (entity.lineweight !== undefined && entity.lineweight !== null && entity.lineweight >= 0)
-            ? entity.lineweight
-            : (entity.lineweight === undefined || entity.lineweight === null ? -1 : 0);
-        const constantWidth = (entity.constantWidth !== undefined && entity.constantWidth !== null)
-            ? entity.constantWidth
-            : 0;
-        const actualWidth = Math.max(lineweight >= 0 ? lineweight : 0, constantWidth);
-        const strokeWidth = (actualWidth > 0) ? 2 : 0.75;
+        const strokeWidth = this.getEntityStrokeWidth(entity);
         ellipse.setAttribute('style', `stroke-width: ${strokeWidth}; vector-effect: non-scaling-stroke;`);
         
         return ellipse;
@@ -4106,7 +4036,6 @@ class DxfPhotoEditor {
             this.viewBox.width = originalWidth;
             this.viewBox.height = originalHeight;
             
-            // ViewBox 업데이트 (내부에서 requestAnimationFrame 사용)
             this.updateViewBox();
         }
         
@@ -4224,8 +4153,8 @@ class DxfPhotoEditor {
                 this.viewBox.width = originalWidth;
                 this.viewBox.height = originalHeight;
                 
-                // ViewBox 업데이트 (내부에서 requestAnimationFrame 사용)
-                this.updateViewBox();
+                // Throttle 적용된 업데이트 (~60fps)
+                this.updateViewBoxThrottled();
             }
             
             // 현재 위치 저장
@@ -4278,8 +4207,8 @@ class DxfPhotoEditor {
                         height: newHeight
                     };
                     
-                    // ViewBox 업데이트 (내부에서 requestAnimationFrame 사용)
-                    this.updateViewBox();
+                    // Throttle 적용된 업데이트 (~60fps)
+                    this.updateViewBoxThrottled();
                 }
             }
             
@@ -4298,13 +4227,11 @@ class DxfPhotoEditor {
         
         if (touches.length === 0) {
             // 모든 터치 종료
-            // 드래그/핀치 종료 시 최종 렌더링
+            // Android: 드래그/핀치 종료 시 사진 렌더링 즉시 갱신
             if (this.isAndroid) {
                 this._lastAndroidPhotoDrawTime = 0;
+                this.updateViewBox();
             }
-            // ViewBox 최종 업데이트 + Canvas 최종 렌더링
-            this.updateViewBox();
-            this.drawPhotosCanvas();
             
             // 컨텍스트 메뉴가 열려있고, 드래그하지 않았고, 롱프레스가 아니면 메뉴 닫기
             const contextMenu = document.getElementById('context-menu');
@@ -4523,7 +4450,7 @@ class DxfPhotoEditor {
             height: newHeight
         };
         
-        // ViewBox 업데이트 (내부에서 requestAnimationFrame 사용)
+        // 빠른 업데이트 (ViewBox만)
         this.updateViewBox();
         
         // 더블탭 줌 시 지도 동기화는 onTouchEnd에서 처리 (터치 종료 후)
@@ -5221,9 +5148,6 @@ class DxfPhotoEditor {
                             const baseName = this.dxfFileName.replace(/\.dxf$/i, '');
                             photo.fileName = `${baseName}_photo_${formatted}.jpg`;
                         }
-                        if (!photo.savedAt) {
-                            photo.savedAt = Date.now();
-                        }
                         
                         await window.localStorageManager.savePhoto(photo, this.dxfFileName);
                         
@@ -5250,7 +5174,6 @@ class DxfPhotoEditor {
                     position: { x: photo.x, y: photo.y },
                     size: { width: photo.width, height: photo.height },
                     memo: photo.memo || '',
-                    savedAt: photo.savedAt || Date.now(),
                     uploaded: photo.uploaded || false
                 })),
                 texts: this.texts,
@@ -5524,9 +5447,28 @@ class DxfPhotoEditor {
         }
         // 메타데이터 재생성 (남은 사진 기준)
         const remainingPhotos = (await window.localStorageManager.loadPhotos(this.dxfFileName)) || [];
-        // 날짜 삭제 시 메타데이터 파일 자체도 삭제
-        await window.localStorageManager.deleteMetadata(this.dxfFileName);
-        this.texts = [];
+        const metadata = await window.localStorageManager.loadMetadata(this.dxfFileName);
+        const texts = metadata?.texts || this.texts || [];
+        
+        if (remainingPhotos.length === 0 && (!texts || texts.length === 0)) {
+            // 사진/텍스트가 없으면 메타데이터도 삭제
+            await window.localStorageManager.deleteMetadata(this.dxfFileName);
+        } else {
+            const rebuilt = {
+                dxfFile: this.dxfFileName,
+                photos: remainingPhotos.map(photo => ({
+                    id: photo.id,
+                    fileName: photo.fileName,
+                    position: { x: photo.x, y: photo.y },
+                    size: { width: photo.width, height: photo.height },
+                    memo: photo.memo || '',
+                    uploaded: true
+                })),
+                texts,
+                lastModified: new Date().toISOString()
+            };
+            await window.localStorageManager.saveMetadata(this.dxfFileName, rebuilt);
+        }
         // 화면 상태 업데이트
         const deleteIds = new Set(toDelete.map(p => p.id));
         this.photos = this.photos.filter(photo => !deleteIds.has(photo.id));
