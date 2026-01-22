@@ -181,7 +181,27 @@ class DxfPhotoEditor {
         this.pauseAutoSave = false;
         this.setupVisibilityListener();
         
+        // 플랫폼 감지
+        this.platform = this.detectPlatform();
+        this.isIOS = this.platform === 'ios';
+        this.isAndroid = this.platform === 'android';
+        
+        console.log(`📱 플랫폼 감지: ${this.platform}`);
+        
         this.init();
+    }
+    
+    /**
+     * 플랫폼 감지
+     */
+    detectPlatform() {
+        const ua = navigator.userAgent;
+        if (/iPad|iPhone|iPod/.test(ua) && !window.MSStream) {
+            return 'ios';
+        } else if (/Android/i.test(ua)) {
+            return 'android';
+        }
+        return 'desktop';
     }
 
     debugLog(...args) {
@@ -572,6 +592,21 @@ class DxfPhotoEditor {
         this.setupCanvas();
         this.setupEventListeners();
         this.drawWelcomeScreen();
+        
+        // 플랫폼별 UI 조정
+        if (this.isAndroid) {
+            // Android: 내보내기 버튼 표시
+            const exportBtn = document.getElementById('menu-export-to-download');
+            if (exportBtn) {
+                exportBtn.style.display = 'block';
+            }
+        } else {
+            // iOS/데스크탑: 내보내기 버튼 숨김
+            const exportBtn = document.getElementById('menu-export-to-download');
+            if (exportBtn) {
+                exportBtn.style.display = 'none';
+            }
+        }
     }
     
     /**
@@ -744,13 +779,15 @@ class DxfPhotoEditor {
         const menuMapVworldBtn = document.getElementById('menu-map-vworld');
         const currentLocationBtn = document.getElementById('current-location-btn');
         const menuConsoleBtn = document.getElementById('menu-console');
+        const menuExportBtn = document.getElementById('menu-export-to-download');
         
         console.log('🔍 슬라이딩 메뉴 버튼 확인:', {
             menuBackBtn: !!menuBackBtn,
             menuFitViewBtn: !!menuFitViewBtn,
             menuCheckMissingBtn: !!menuCheckMissingBtn,
             menuImageSizeBtn: !!menuImageSizeBtn,
-            menuConsoleBtn: !!menuConsoleBtn
+            menuConsoleBtn: !!menuConsoleBtn,
+            menuExportBtn: !!menuExportBtn
         });
         
         if (menuBackBtn) {
@@ -878,8 +915,19 @@ class DxfPhotoEditor {
             console.error('❌ menu-console 버튼을 찾을 수 없습니다!');
         }
         
+        if (menuExportBtn) {
+            menuExportBtn.addEventListener('click', async (e) => {
+                console.log('✅ 다운로드 폴더로 내보내기 버튼 클릭됨!');
+                e.stopPropagation();
+                this.closeSlideMenu();
+                await this.exportToDownloadFolder();
+            });
+        } else {
+            console.warn('⚠️ menu-export-to-download 버튼을 찾을 수 없습니다!');
+        }
+        
         // 메뉴 아이템들 터치 이벤트에서 롱프레스 방지
-        [menuBackBtn, menuFitViewBtn, menuCheckMissingBtn, menuImageSizeBtn, menuMapGoogleBtn, menuMapVworldBtn, menuConsoleBtn].forEach(btn => {
+        [menuBackBtn, menuFitViewBtn, menuCheckMissingBtn, menuImageSizeBtn, menuMapGoogleBtn, menuMapVworldBtn, menuConsoleBtn, menuExportBtn].forEach(btn => {
             if (btn) {
                 btn.addEventListener('touchstart', (e) => {
                     e.stopPropagation();
@@ -2206,19 +2254,25 @@ class DxfPhotoEditor {
             this.metadataDirty = false;
             this.debugLog('   사진/텍스트 데이터 초기화 완료');
             
-            await this.ensureDriveContextForLocalFile(file);
-            
             // 1. 파일 읽기
             const text = await file.text();
-            
             this._parseDxf(text, file.name);
             
-            if (window.driveManager?.isAccessTokenValid()) {
-                await this.syncLocalDxfToDrive(file);
-                await this.loadMetadataAndDisplay(file.name);
+            // 플랫폼별 처리
+            if (this.isAndroid) {
+                // Android: IndexedDB에서 복원 (Google Drive 연동 불필요)
+                await this.restoreFromLocalStorage();
             } else {
-                this.pendingLocalDriveSync = true;
-                this.showToast('Google Drive 로그인 후 사진/메모가 동기화됩니다.');
+                // iOS/데스크탑: Google Drive 연동
+                await this.ensureDriveContextForLocalFile(file);
+                
+                if (window.driveManager?.isAccessTokenValid()) {
+                    await this.syncLocalDxfToDrive(file);
+                    await this.loadMetadataAndDisplay(file.name);
+                } else {
+                    this.pendingLocalDriveSync = true;
+                    this.showToast('Google Drive 로그인 후 사진/메모가 동기화됩니다.');
+                }
             }
             
         } catch (error) {
@@ -4840,136 +4894,33 @@ class DxfPhotoEditor {
             return;
         }
         
-        // Google Drive에 데이터 저장
+        // 플랫폼별 저장 전략 분기
         console.log('💾 자동 저장 실행 (debounce 완료)...');
-        console.log('   saveToDrive 함수:', typeof window.saveToDrive);
-        console.log('   currentDriveFile:', window.currentDriveFile);
-        
-        if (!window.currentDriveFile && this.localSourceFile) {
-            await this.ensureDriveContextForLocalFile(this.localSourceFile);
-        }
-        
-        if (typeof window.saveToDrive !== 'function') {
-            console.error('❌ saveToDrive 함수를 찾을 수 없습니다');
-            this.showToast('⚠️ 저장 실패: 드라이브 기능을 사용할 수 없습니다');
-            return;
-        }
-        
-        if (!window.currentDriveFile) {
-            console.warn('⚠️ Google Drive 파일 정보가 없습니다 (로컬 파일 또는 로그인 안 됨)');
-            this.showToast('⚠️ 저장 실패: Google Drive에서 파일을 열어주세요');
-            return;
-        }
+        console.log(`   플랫폼: ${this.platform}`);
         
         try {
             this.isAutoSaving = true;
             
-            // 업로드되지 않은 사진만 필터링
-            const newPhotos = this.photos.filter(p => !p.uploaded);
-            const hasNewPhotos = newPhotos.length > 0;
-            const needsMetadataUpdate = this.metadataDirty || hasNewPhotos;
-            
-            console.log('📦 저장할 데이터:', {
-                totalPhotosCount: this.photos.length,
-                newPhotosCount: newPhotos.length,
-                textsCount: this.texts.length,
-                fileName: window.currentDriveFile.name
-            });
-            
-            // 새로운 사진이 있거나 메타데이터가 변경되었을 때만 업로드
-            if (needsMetadataUpdate) {
-                // 저장 중 메시지 표시 (addPhotoAt에서 이미 표시한 경우 중복 방지)
-                // 단, addPhotoAt에서 이미 "☁️ 저장 중 (구글드라이브)"를 표시했으므로
-                // 여기서는 표시하지 않음 (중복 방지)
-                
-                const appData = {
-                    photos: newPhotos,  // 새로운 사진만
-                    allPhotos: this.photos,  // 전체 사진 목록 (메타데이터용)
-                    texts: this.texts
-                };
-                
-                const success = await window.saveToDrive(appData, window.currentDriveFile.name);
-                
-                if (success) {
-                    // ⚠️ 중요: Google Drive에 확실히 저장된 사진만 메모리 해제
-                    // saveToDrive() 내에서 개별 사진 업로드 성공 시 photo.uploaded = true 설정됨
-                    // 업로드 실패한 사진은 photo.uploaded = false로 유지됨
-                    let memoryFreedCount = 0;
-                    let memoryKeptCount = 0;
-                    
-                    newPhotos.forEach(photo => {
-                        // ⚠️ 핵심: uploaded === true인 사진만 메모리 해제
-                        // 업로드 실패한 사진은 메모리 유지 (재시도 가능하도록)
-                        if (photo.uploaded === true) {
-                            // Google Drive에 확실히 저장 완료된 사진만 메모리 해제
-                            
-                            // Image 객체 메모리 해제
-                            if (photo.image) {
-                                // onerror 핸들러 제거 (오류 이벤트 방지)
-                                photo.image.onerror = null;
-                                photo.image.onload = null;
-                                photo.image = null;
-                            }
-                            
-                            // 이미지 데이터 메모리 해제 (Google Drive에 저장 완료되었으므로)
-                            photo.imageData = null;
-                            memoryFreedCount++;
-                            
-                            console.log(`   💾 메모리 해제: ${photo.fileName || '사진'}`);
-                        } else {
-                            // 업로드 실패한 사진은 메모리 유지 (재시도 가능하도록)
-                            memoryKeptCount++;
-                            console.log(`   ⚠️ 메모리 유지 (업로드 실패): ${photo.fileName || '사진'}`);
-                        }
-                    });
-                    
-                    if (memoryFreedCount > 0) {
-                        console.log(`✅ 메모리 해제 완료: ${memoryFreedCount}개 사진`);
-                    }
-                    
-                    // 업로드 실패한 사진이 있는지 확인
-                    const stillFailedPhotos = this.photos.filter(p => !p.uploaded && p.imageData);
-                    if (stillFailedPhotos.length > 0) {
-                        console.warn(`⚠️ 메모리 유지 (업로드 실패): ${stillFailedPhotos.length}개 사진`);
-                        // ⚠️ 업로드 실패한 사진이 있으면 자동 재시도 예약
-                        // 단, autoSavePending이 있으면 재시도하지 않음 (중복 방지)
-                        if (!this.autoSavePending) {
-                            this.scheduleAutoRetry();
-                        } else {
-                            console.log('   ⏭️ 자동 재시도 스킵 (autoSavePending이 처리 예정)');
-                        }
-                    } else {
-                        // 모든 사진 업로드 완료 시 자동 재시도 취소 및 재시도 횟수 초기화
-                        this.cancelAutoRetry();
-                    }
-                    
-                    this.metadataDirty = false;
-                    console.log('✅ 자동 저장 완료');
-                    this.showToast('✅ 저장 완료');
-                    
-                    // 화면 다시 그리기 (마커 색상 실시간 업데이트: 초록색 → 빨간색)
-                    // 사진 업로드 완료 후 즉시 마커 색상이 변경되도록
-                    this.redraw();
-                } else {
-                    // 전체 저장 실패: 모든 사진의 메모리 유지 (재시도 가능하도록)
-                    console.error('❌ 자동 저장 실패 (false 반환)');
-                    console.warn('⚠️ 모든 사진의 메모리 유지 (재시도 가능하도록)');
-                    this.showToast('⚠️ 저장 실패');
-                    // ⚠️ 전체 저장 실패 시에도 자동 재시도 예약
-                    this.scheduleAutoRetry();
-                }
+            if (this.isAndroid) {
+                // Android: IndexedDB에 로컬 저장
+                await this.saveToLocalStorage();
             } else {
-                console.log('⏭️ 새로운 사진/메타데이터 변경 없음 - 업로드 스킵');
+                // iOS/데스크탑: Google Drive 저장 (기존 방식)
+                await this.saveToGoogleDrive();
             }
+                
         } catch (error) {
             console.error('❌ 자동 저장 오류:', error);
-            if (error && /로그인/.test(error.message || '')) {
-                this.showToast('로그인이 만료되었습니다. Google Drive 버튼으로 다시 로그인하세요.');
+            if (this.isAndroid) {
+                this.showToast(`⚠️ 저장 실패: ${error.message}`);
             } else {
-                // 로그인 오류가 아닌 경우에만 자동 재시도 (로그인 오류는 사용자 개입 필요)
-                this.scheduleAutoRetry();
+                if (error && /로그인/.test(error.message || '')) {
+                    this.showToast('로그인이 만료되었습니다. Google Drive 버튼으로 다시 로그인하세요.');
+                } else {
+                    this.scheduleAutoRetry();
+                }
+                this.showToast(`⚠️ 저장 실패: ${error.message}`);
             }
-            this.showToast(`⚠️ 저장 실패: ${error.message}`);
         } finally {
             this.isAutoSaving = false;
             
@@ -4994,6 +4945,268 @@ class DxfPhotoEditor {
                     });
                 }, 500);
             }
+        }
+    }
+    
+    /**
+     * Google Drive에 저장 (iOS/데스크탑용)
+     */
+    async saveToGoogleDrive() {
+        console.log('💾 Google Drive 저장 시작...');
+        
+        if (!window.currentDriveFile && this.localSourceFile) {
+            await this.ensureDriveContextForLocalFile(this.localSourceFile);
+        }
+        
+        if (typeof window.saveToDrive !== 'function') {
+            console.error('❌ saveToDrive 함수를 찾을 수 없습니다');
+            this.showToast('⚠️ 저장 실패: 드라이브 기능을 사용할 수 없습니다');
+            return;
+        }
+        
+        if (!window.currentDriveFile) {
+            console.warn('⚠️ Google Drive 파일 정보가 없습니다 (로컬 파일 또는 로그인 안 됨)');
+            this.showToast('⚠️ 저장 실패: Google Drive에서 파일을 열어주세요');
+            return;
+        }
+        
+        // 업로드되지 않은 사진만 필터링
+        const newPhotos = this.photos.filter(p => !p.uploaded);
+        const hasNewPhotos = newPhotos.length > 0;
+        const needsMetadataUpdate = this.metadataDirty || hasNewPhotos;
+        
+        console.log('📦 저장할 데이터:', {
+            totalPhotosCount: this.photos.length,
+            newPhotosCount: newPhotos.length,
+            textsCount: this.texts.length,
+            fileName: window.currentDriveFile.name
+        });
+        
+        // 새로운 사진이 있거나 메타데이터가 변경되었을 때만 업로드
+        if (needsMetadataUpdate) {
+            const appData = {
+                photos: newPhotos,
+                allPhotos: this.photos,
+                texts: this.texts
+            };
+            
+            const success = await window.saveToDrive(appData, window.currentDriveFile.name);
+            
+            if (success) {
+                // Google Drive에 확실히 저장된 사진만 메모리 해제
+                let memoryFreedCount = 0;
+                
+                newPhotos.forEach(photo => {
+                    if (photo.uploaded === true) {
+                        if (photo.image) {
+                            photo.image.onerror = null;
+                            photo.image.onload = null;
+                            photo.image = null;
+                        }
+                        photo.imageData = null;
+                        memoryFreedCount++;
+                    }
+                });
+                
+                if (memoryFreedCount > 0) {
+                    console.log(`✅ 메모리 해제 완료: ${memoryFreedCount}개 사진`);
+                }
+                
+                // 업로드 실패한 사진이 있는지 확인
+                const stillFailedPhotos = this.photos.filter(p => !p.uploaded && p.imageData);
+                if (stillFailedPhotos.length > 0) {
+                    if (!this.autoSavePending) {
+                        this.scheduleAutoRetry();
+                    }
+                } else {
+                    this.cancelAutoRetry();
+                }
+                
+                this.metadataDirty = false;
+                console.log('✅ Google Drive 저장 완료');
+                this.showToast('✅ 저장 완료');
+                this.redraw();
+            } else {
+                console.error('❌ Google Drive 저장 실패');
+                this.showToast('⚠️ 저장 실패');
+                this.scheduleAutoRetry();
+            }
+        } else {
+            console.log('⏭️ 새로운 사진/메타데이터 변경 없음 - 업로드 스킵');
+        }
+    }
+    
+    /**
+     * IndexedDB에 로컬 저장 (Android용)
+     */
+    async saveToLocalStorage() {
+        if (!this.dxfFileName) {
+            console.warn('⚠️ DXF 파일명이 없습니다');
+            return;
+        }
+        
+        if (!window.localStorageManager) {
+            console.error('❌ LocalStorageManager가 초기화되지 않았습니다');
+            this.showToast('⚠️ 저장 실패: 로컬 저장소를 사용할 수 없습니다');
+            return;
+        }
+        
+        try {
+            // IndexedDB 초기화
+            if (!window.localStorageManager.db) {
+                await window.localStorageManager.init();
+            }
+            
+            console.log('💾 IndexedDB 저장 시작...');
+            console.log(`   파일명: ${this.dxfFileName}`);
+            console.log(`   사진 개수: ${this.photos.length}`);
+            console.log(`   텍스트 개수: ${this.texts.length}`);
+            
+            // 사진 저장
+            if (this.photos.length > 0) {
+                await window.localStorageManager.savePhotos(this.photos, this.dxfFileName);
+            }
+            
+            // 메타데이터 저장
+            const metadata = {
+                dxfFile: this.dxfFileName,
+                photos: this.photos.map(photo => ({
+                    id: photo.id,
+                    fileName: photo.fileName,
+                    position: { x: photo.x, y: photo.y },
+                    size: { width: photo.width, height: photo.height },
+                    memo: photo.memo || ''
+                })),
+                texts: this.texts,
+                lastModified: new Date().toISOString()
+            };
+            
+            await window.localStorageManager.saveMetadata(this.dxfFileName, metadata);
+            
+            this.metadataDirty = false;
+            console.log('✅ IndexedDB 저장 완료');
+            this.showToast('✅ 로컬 저장 완료');
+            
+        } catch (error) {
+            console.error('❌ IndexedDB 저장 실패:', error);
+            throw error;
+        }
+    }
+    
+    /**
+     * IndexedDB에서 데이터 복원 (Android용)
+     */
+    async restoreFromLocalStorage() {
+        if (!this.dxfFileName || !this.isAndroid) {
+            return;
+        }
+        
+        if (!window.localStorageManager) {
+            return;
+        }
+        
+        try {
+            // IndexedDB 초기화
+            if (!window.localStorageManager.db) {
+                await window.localStorageManager.init();
+            }
+            
+            console.log('📥 IndexedDB에서 데이터 복원 중...');
+            
+            // 사진 로드
+            const savedPhotos = await window.localStorageManager.loadPhotos(this.dxfFileName);
+            if (savedPhotos && savedPhotos.length > 0) {
+                // 기존 사진과 병합 (중복 제거)
+                const existingIds = new Set(this.photos.map(p => p.id));
+                const newPhotos = savedPhotos.filter(p => !existingIds.has(p.id));
+                
+                // 이미지 객체 재생성
+                for (const photo of newPhotos) {
+                    if (photo.imageData) {
+                        const img = new Image();
+                        img.src = photo.imageData;
+                        photo.image = img;
+                    }
+                }
+                
+                this.photos = [...this.photos, ...newPhotos];
+                console.log(`✅ ${newPhotos.length}개 사진 복원 완료`);
+            }
+            
+            // 메타데이터 로드
+            const metadata = await window.localStorageManager.loadMetadata(this.dxfFileName);
+            if (metadata) {
+                // 텍스트 복원
+                if (metadata.texts && metadata.texts.length > 0) {
+                    const existingTextIds = new Set(this.texts.map(t => t.id));
+                    const newTexts = metadata.texts.filter(t => !existingTextIds.has(t.id));
+                    this.texts = [...this.texts, ...newTexts];
+                    console.log(`✅ ${newTexts.length}개 텍스트 복원 완료`);
+                }
+            }
+            
+            // 화면 다시 그리기
+            this.redraw();
+            
+        } catch (error) {
+            console.error('❌ IndexedDB 복원 실패:', error);
+        }
+    }
+    
+    /**
+     * 다운로드 폴더로 내보내기 (Android용)
+     */
+    async exportToDownloadFolder() {
+        if (!this.dxfFileName) {
+            this.showToast('⚠️ DXF 파일을 먼저 열어주세요');
+            return;
+        }
+        
+        if (!window.localStorageManager) {
+            this.showToast('⚠️ 로컬 저장소를 사용할 수 없습니다');
+            return;
+        }
+        
+        try {
+            this.showLoading(true);
+            this.showToast('📥 다운로드 폴더로 내보내는 중...');
+            
+            // IndexedDB 초기화
+            if (!window.localStorageManager.db) {
+                await window.localStorageManager.init();
+            }
+            
+            // 메타데이터 로드
+            const metadata = await window.localStorageManager.loadMetadata(this.dxfFileName);
+            if (!metadata) {
+                this.showToast('⚠️ 저장된 데이터가 없습니다');
+                return;
+            }
+            
+            const baseName = this.dxfFileName.replace(/\.dxf$/i, '');
+            
+            // 메타데이터 JSON 저장
+            const metadataBlob = new Blob([JSON.stringify(metadata, null, 2)], { type: 'application/json' });
+            this.downloadBlob(metadataBlob, `${baseName}_metadata.json`);
+            
+            // 사진 파일 저장
+            const photos = await window.localStorageManager.loadPhotos(this.dxfFileName);
+            for (const photo of photos) {
+                if (photo.imageData && photo.fileName) {
+                    const blob = window.localStorageManager.base64ToBlob(photo.imageData, 'image/jpeg');
+                    // 약간의 지연을 두어 다운로드가 순차적으로 진행되도록
+                    await new Promise(resolve => setTimeout(resolve, 200));
+                    this.downloadBlob(blob, photo.fileName);
+                }
+            }
+            
+            this.showToast(`✅ 내보내기 완료 (${photos.length}개 파일)`);
+            
+        } catch (error) {
+            console.error('❌ 내보내기 실패:', error);
+            this.showToast(`⚠️ 내보내기 실패: ${error.message}`);
+        } finally {
+            this.showLoading(false);
         }
     }
     

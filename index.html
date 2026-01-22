@@ -965,6 +965,9 @@ DMAP - DXF 도면 사진 편집기 (UI)
         <button class="slide-menu-item" id="menu-console">
             콘솔
         </button>
+        <button class="slide-menu-item" id="menu-export-to-download" style="display: none;">
+            📥 다운로드 폴더로 내보내기
+        </button>
     </div>
 
     <!-- 메뉴 배경 오버레이 -->
@@ -1214,6 +1217,9 @@ DMAP - DXF 도면 사진 편집기 (UI)
     
     <!-- Google Maps API (참조 파일과 동일한 API 키 사용) -->
     <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDVwJrvIcbqAOX24g9JODhD7DGtTz7z2Pg&libraries=geometry" async defer></script>
+    
+    <!-- 로컬 저장소 모듈 (Android용) -->
+    <script src="local-storage.js"></script>
     
     <!-- Google Drive 모듈 (먼저 로드) -->
     <script src="google-drive.js"></script>
