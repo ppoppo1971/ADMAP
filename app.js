@@ -5226,19 +5226,49 @@ class DxfPhotoEditor {
             
             const baseName = this.dxfFileName.replace(/\.dxf$/i, '');
             
-            // 메타데이터 JSON 저장
+            const photos = await window.localStorageManager.loadPhotos(this.dxfFileName);
+            
+            // JSZip이 있으면 단일 ZIP으로 내보내기 (다중 다운로드 차단 방지)
+            if (typeof JSZip !== 'undefined') {
+                const zip = new JSZip();
+                zip.file(`${baseName}_metadata.json`, JSON.stringify(metadata, null, 2));
+                
+                let addedCount = 0;
+                for (const photo of photos) {
+                    if (!photo.imageData) {
+                        continue;
+                    }
+                    const fileName = photo.fileName || `${baseName}_photo_${photo.id}.jpg`;
+                    const base64 = photo.imageData.includes(',')
+                        ? photo.imageData.split(',')[1]
+                        : null;
+                    if (!base64) {
+                        continue;
+                    }
+                    zip.file(fileName, base64, { base64: true });
+                    addedCount++;
+                }
+                
+                const zipBlob = await zip.generateAsync({ type: 'blob' });
+                this.downloadBlob(zipBlob, `${baseName}_export.zip`);
+                this.showToast(`✅ 내보내기 완료 (ZIP, 사진 ${addedCount}개)`);
+                return;
+            }
+            
+            // 메타데이터 JSON 저장 (JSZip이 없으면 개별 다운로드)
             const metadataBlob = new Blob([JSON.stringify(metadata, null, 2)], { type: 'application/json' });
             this.downloadBlob(metadataBlob, `${baseName}_metadata.json`);
             
-            // 사진 파일 저장
-            const photos = await window.localStorageManager.loadPhotos(this.dxfFileName);
+            // 사진 파일 저장 (브라우저가 다중 다운로드를 차단할 수 있음)
             for (const photo of photos) {
-                if (photo.imageData && photo.fileName) {
-                    const blob = window.localStorageManager.base64ToBlob(photo.imageData, 'image/jpeg');
-                    // 약간의 지연을 두어 다운로드가 순차적으로 진행되도록
-                    await new Promise(resolve => setTimeout(resolve, 200));
-                    this.downloadBlob(blob, photo.fileName);
+                if (!photo.imageData) {
+                    continue;
                 }
+                const fileName = photo.fileName || `${baseName}_photo_${photo.id}.jpg`;
+                const blob = window.localStorageManager.base64ToBlob(photo.imageData, 'image/jpeg');
+                // 약간의 지연을 두어 다운로드가 순차적으로 진행되도록
+                await new Promise(resolve => setTimeout(resolve, 200));
+                this.downloadBlob(blob, fileName);
             }
             
             this.showToast(`✅ 내보내기 완료 (${photos.length}개 파일)`);
