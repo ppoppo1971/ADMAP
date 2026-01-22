@@ -430,6 +430,21 @@ class DxfPhotoEditor {
         return this.cachedRect;
     }
 
+    /**
+     * 현재 줌 스케일 계산
+     * - originalViewBox 대비 현재 viewBox 비율
+     * - 과도한 확대/축소는 제한하여 안정적 렌더링
+     */
+    getZoomScale() {
+        const baseWidth = this.originalViewBox?.width || this.viewBox?.width || 1;
+        const currentWidth = this.viewBox?.width || baseWidth;
+        if (!isFinite(baseWidth) || !isFinite(currentWidth) || currentWidth === 0) {
+            return 1;
+        }
+        const scale = baseWidth / currentWidth;
+        return Math.max(0.1, Math.min(scale, 20));
+    }
+
     viewToCanvasCoords(x, y) {
         if (!this.svg) {
             return { x, y };
@@ -3143,7 +3158,7 @@ class DxfPhotoEditor {
         line.setAttribute('data-strokewidth', strokeWidth);
         line.setAttribute('data-layer', entity.layer || '');
         
-        line.setAttribute('style', `stroke-width: ${strokeWidth}px; vector-effect: non-scaling-stroke;`);
+        line.setAttribute('style', `stroke-width: ${strokeWidth};`);
         
         line.setAttribute('stroke-linecap', 'round');
         
@@ -3199,7 +3214,7 @@ class DxfPhotoEditor {
         element.setAttribute('data-strokewidth', strokeWidth);
         element.setAttribute('data-layer', entity.layer || '');
         
-        element.setAttribute('style', `stroke-width: ${strokeWidth}px; vector-effect: non-scaling-stroke;`);
+        element.setAttribute('style', `stroke-width: ${strokeWidth};`);
         
         element.setAttribute('stroke-linejoin', 'round');
         element.setAttribute('stroke-linecap', 'round');
@@ -3219,7 +3234,7 @@ class DxfPhotoEditor {
         
         // 조건부 선 굵기: 실제 굵기가 0 초과면 2px, 아니면 0.5px
         const strokeWidth = this.getEntityStrokeWidth(entity);
-        circle.setAttribute('style', `stroke-width: ${strokeWidth}; vector-effect: non-scaling-stroke;`);
+        circle.setAttribute('style', `stroke-width: ${strokeWidth};`);
         
         return circle;
     }
@@ -3246,7 +3261,7 @@ class DxfPhotoEditor {
         
         // 조건부 선 굵기: 실제 굵기가 0 초과면 2px, 아니면 0.5px
         const strokeWidth = this.getEntityStrokeWidth(entity);
-        path.setAttribute('style', `stroke-width: ${strokeWidth}; vector-effect: non-scaling-stroke;`);
+        path.setAttribute('style', `stroke-width: ${strokeWidth};`);
         
         return path;
     }
@@ -3433,7 +3448,7 @@ class DxfPhotoEditor {
         
         // 조건부 선 굵기: 실제 굵기가 0 초과면 2px, 아니면 0.5px
         const strokeWidth = this.getEntityStrokeWidth(entity);
-        polyline.setAttribute('style', `stroke-width: ${strokeWidth}; vector-effect: non-scaling-stroke;`);
+        polyline.setAttribute('style', `stroke-width: ${strokeWidth};`);
         
         return polyline;
     }
@@ -3459,7 +3474,7 @@ class DxfPhotoEditor {
         
         // 조건부 선 굵기: 실제 굵기가 0 초과면 2px, 아니면 0.5px
         const strokeWidth = this.getEntityStrokeWidth(entity);
-        ellipse.setAttribute('style', `stroke-width: ${strokeWidth}; vector-effect: non-scaling-stroke;`);
+        ellipse.setAttribute('style', `stroke-width: ${strokeWidth};`);
         
         return ellipse;
     }
@@ -3511,7 +3526,8 @@ class DxfPhotoEditor {
      */
     drawTexts() {
         const rect = this.getCachedRect();
-        const margin = 50; // 여유 공간 (텍스트 크기 고려)
+        const zoomScale = this.getZoomScale();
+        const margin = 50 * Math.min(Math.max(zoomScale, 1), 4); // 여유 공간 (줌 반영)
         
         // ViewBox 기반 필터링으로 화면에 보이는 텍스트만 선택
         const visibleTexts = this.texts.filter(textObj => {
@@ -3532,8 +3548,9 @@ class DxfPhotoEditor {
             // ViewBox 좌표 → 스크린 좌표 변환 (필터링된 텍스트이므로 이미 화면 내)
             const { x, y } = this.viewToCanvasCoords(textObj.x, textObj.y);
             
-            // 고정 크기: 9px (작은 크기, 줌과 무관하게 일정)
-            const fontSize = 9;
+            // 확대 시에도 읽기 쉬운 크기 유지 (최대 36px)
+            const baseFontSize = 9;
+            const fontSize = Math.min(36, Math.max(baseFontSize, baseFontSize * zoomScale));
             
             this.ctx.save();
             
@@ -3575,7 +3592,8 @@ class DxfPhotoEditor {
      */
     drawPhotos() {
         const rect = this.getCachedRect();
-        const margin = 50; // 여유 공간 (마커 크기 고려)
+        const zoomScale = this.getZoomScale();
+        const margin = 50 * Math.min(Math.max(zoomScale, 1), 4); // 여유 공간 (줌 반영)
         
         // ViewBox 기반 필터링으로 화면에 보이는 사진만 선택
         const visiblePhotos = this.photos.filter(photo => {
@@ -3604,15 +3622,16 @@ class DxfPhotoEditor {
             
             let markerColor;
             let markerRadius;
+            const radiusScale = Math.min(Math.max(zoomScale, 1), 6);
             
             if (isUploaded) {
                 // 업로드 완료 → 빨간점 (작은 크기)
                 markerColor = hasMemo ? '#9B51E0' : '#FF0000'; // 보라색(메모) 또는 빨간색
-                markerRadius = 5.625; // 직경 11.25px (기존 1.5배)
+                markerRadius = 5.625 * radiusScale; // 줌에 따라 확대
             } else {
                 // 업로드 실패/대기 → 초록색 (5배 크기) - 사용자 알림
                 markerColor = '#00C853'; // 초록색 (주의 필요)
-                markerRadius = 18.75; // 직경 37.5px (5배 크기)
+                markerRadius = 18.75 * radiusScale; // 줌에 따라 확대
             }
             
             // 원 그리기

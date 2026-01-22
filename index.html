@@ -20,7 +20,7 @@ DMAP - DXF 도면 사진 편집기 (UI)
 최적화:
   - touch-action: none (터치 제스처 직접 제어)
   - will-change: transform (GPU 가속)
-  - vector-effect: non-scaling-stroke (SVG 선 굵기 고정)
+  - SVG 선 굵기 줌 반영
   - vConsole 디버깅 콘솔 내장
 
 버전: 1.0.0 (0353)
@@ -187,13 +187,11 @@ DMAP - DXF 도면 사진 편집기 (UI)
         #svg ellipse,
         #svg path,
         #svg polygon {
-            vector-effect: non-scaling-stroke;
         }
         
         /* POINT는 매우 작게 */
         #svg .dxf-point {
             r: 0.03 !important;
-            vector-effect: non-scaling-stroke !important;
         }
 
         #canvas {
