@@ -136,6 +136,12 @@ class DxfPhotoEditor {
         this.defaultZoomRange = 50; // 더블탭 시 50m 범위
         this.currentRangeIndex = -1; // -1 = 전체보기
         
+        // 뷰포트 컬링 (대형 DXF 성능 최적화)
+        this.entityBounds = []; // 각 엔티티의 경계 박스
+        this.visibleEntityIds = new Set(); // 현재 보이는 엔티티 ID
+        this.cullingEnabled = true; // 뷰포트 컬링 활성화
+        this.cullingMargin = 50; // 뷰포트 여백 (%.비율)
+        
         // 렌더링 최적화
         this.redrawPending = false;
         this.updatePending = false;
@@ -997,6 +1003,46 @@ class DxfPhotoEditor {
                 e.stopPropagation();
             });
         }
+        
+        // 줌 레벨 표시 터치 시 직접 입력 모달
+        const zoomLevelDisplay = document.getElementById('zoom-level-display');
+        if (zoomLevelDisplay) {
+            zoomLevelDisplay.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.openZoomInputModal();
+            });
+            zoomLevelDisplay.addEventListener('touchstart', (e) => {
+                e.stopPropagation();
+            }, { passive: false });
+        }
+        
+        // 줌 입력 모달 이벤트
+        const zoomInputCancel = document.getElementById('zoom-input-cancel');
+        const zoomInputConfirm = document.getElementById('zoom-input-confirm');
+        const zoomInputModal = document.getElementById('zoom-input-modal');
+        
+        if (zoomInputCancel) {
+            zoomInputCancel.addEventListener('click', () => this.closeZoomInputModal());
+        }
+        if (zoomInputConfirm) {
+            zoomInputConfirm.addEventListener('click', () => this.applyZoomInput());
+        }
+        if (zoomInputModal) {
+            zoomInputModal.addEventListener('click', (e) => {
+                if (e.target === zoomInputModal) this.closeZoomInputModal();
+            });
+        }
+        
+        // 줌 프리셋 버튼
+        document.querySelectorAll('.zoom-preset-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const range = parseInt(e.target.dataset.range);
+                if (range) {
+                    document.getElementById('zoom-range-input').value = range;
+                    this.applyZoomInput();
+                }
+            });
+        });
         
         // 메모 모달
         const closeMemoBtn = document.getElementById('close-memo');
@@ -2649,6 +2695,9 @@ class DxfPhotoEditor {
             this.currentRangeIndex = -1;
             
             console.log(`ViewBox 설정:`, this.viewBox);
+            
+            // 뷰포트 컬링을 위한 엔티티 경계 계산
+            this.calculateEntityBounds();
         } else {
             console.warn('도면 크기가 0입니다. 기본 뷰 사용.');
             this.viewBox = { x: -500, y: -500, width: 1000, height: 1000 };
@@ -2794,6 +2843,73 @@ class DxfPhotoEditor {
     }
     
     /**
+     * 줌 레벨 직접 입력 모달 열기
+     */
+    openZoomInputModal() {
+        const modal = document.getElementById('zoom-input-modal');
+        const input = document.getElementById('zoom-range-input');
+        if (!modal || !input) return;
+        
+        // 현재 범위 값으로 초기화
+        const currentRange = Math.round(this.viewBox.width);
+        input.value = currentRange;
+        
+        modal.classList.add('active');
+        input.focus();
+        input.select();
+    }
+    
+    /**
+     * 줌 레벨 직접 입력 모달 닫기
+     */
+    closeZoomInputModal() {
+        const modal = document.getElementById('zoom-input-modal');
+        if (modal) {
+            modal.classList.remove('active');
+        }
+    }
+    
+    /**
+     * 줌 입력 적용
+     */
+    applyZoomInput() {
+        const input = document.getElementById('zoom-range-input');
+        if (!input) return;
+        
+        let range = parseInt(input.value);
+        
+        // 범위 제한
+        if (isNaN(range) || range < 20) range = 20;
+        if (range > 5000) range = 5000;
+        
+        // 현재 viewBox 중심점 유지하면서 범위만 변경
+        const centerX = this.viewBox.x + this.viewBox.width / 2;
+        const centerY = this.viewBox.y + this.viewBox.height / 2;
+        
+        // 현재 화면 비율 유지
+        const aspectRatio = this.viewBox.height / this.viewBox.width;
+        const newWidth = range;
+        const newHeight = range * aspectRatio;
+        
+        this.viewBox = {
+            x: centerX - newWidth / 2,
+            y: centerY - newHeight / 2,
+            width: newWidth,
+            height: newHeight
+        };
+        
+        this.updateViewBox();
+        this.closeZoomInputModal();
+        
+        // 뷰포트 컬링: 범위 변경 후 SVG 다시 그리기
+        if (this.cullingEnabled && this.entityBounds.length > 0) {
+            this.scheduleCullingRedraw();
+        }
+        
+        this.showToast(`📐 범위: ${range}m`);
+    }
+    
+    /**
      * CSS transform을 viewBox로 동기화 (드래그 종료 시)
      * GPU 가속 드래그 후 정확한 좌표로 변환
      */
@@ -2821,6 +2937,23 @@ class DxfPhotoEditor {
         
         // rect 캐시 무효화
         this.cachedRect = null;
+        
+        // 뷰포트 컬링: 이동 완료 후 SVG 다시 그리기 (새로운 영역의 엔티티 렌더링)
+        if (this.cullingEnabled && this.entityBounds.length > 0) {
+            this.scheduleCullingRedraw();
+        }
+    }
+    
+    /**
+     * 뷰포트 컬링을 위한 지연 재렌더링 (debounce)
+     */
+    scheduleCullingRedraw() {
+        if (this.cullingRedrawTimer) {
+            clearTimeout(this.cullingRedrawTimer);
+        }
+        this.cullingRedrawTimer = setTimeout(() => {
+            this.redraw();
+        }, 100); // 100ms 대기 후 재렌더링
     }
     
     /**
@@ -2875,6 +3008,129 @@ class DxfPhotoEditor {
     }
     
     
+    /**
+     * 모든 엔티티의 경계 박스 미리 계산 (뷰포트 컬링용)
+     */
+    calculateEntityBounds() {
+        if (!this.dxfData || !this.dxfData.entities) return;
+        
+        this.entityBounds = [];
+        
+        this.dxfData.entities.forEach((entity, index) => {
+            const bounds = this.getEntityBounds(entity);
+            this.entityBounds[index] = bounds;
+        });
+        
+        console.log(`✅ 엔티티 경계 계산 완료: ${this.entityBounds.length}개`);
+    }
+    
+    /**
+     * 단일 엔티티의 경계 박스 계산
+     */
+    getEntityBounds(entity) {
+        if (!entity) return null;
+        
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        
+        const updateBounds = (x, y) => {
+            if (typeof x === 'number' && typeof y === 'number' && isFinite(x) && isFinite(y)) {
+                minX = Math.min(minX, x);
+                minY = Math.min(minY, -y); // Y축 반전
+                maxX = Math.max(maxX, x);
+                maxY = Math.max(maxY, -y);
+            }
+        };
+        
+        try {
+            switch (entity.type) {
+                case 'LINE':
+                    if (entity.vertices && entity.vertices.length >= 2) {
+                        entity.vertices.forEach(v => updateBounds(v.x, v.y));
+                    }
+                    break;
+                case 'POLYLINE':
+                case 'LWPOLYLINE':
+                    if (entity.vertices) {
+                        entity.vertices.forEach(v => updateBounds(v.x, v.y));
+                    }
+                    break;
+                case 'CIRCLE':
+                    if (entity.center && entity.radius) {
+                        updateBounds(entity.center.x - entity.radius, entity.center.y - entity.radius);
+                        updateBounds(entity.center.x + entity.radius, entity.center.y + entity.radius);
+                    }
+                    break;
+                case 'ARC':
+                    if (entity.center && entity.radius) {
+                        updateBounds(entity.center.x - entity.radius, entity.center.y - entity.radius);
+                        updateBounds(entity.center.x + entity.radius, entity.center.y + entity.radius);
+                    }
+                    break;
+                case 'POINT':
+                    if (entity.position) {
+                        updateBounds(entity.position.x, entity.position.y);
+                    }
+                    break;
+                case 'TEXT':
+                case 'MTEXT':
+                    const pos = entity.startPoint || entity.position;
+                    if (pos) {
+                        updateBounds(pos.x, pos.y);
+                        // 텍스트 크기 추정
+                        const size = entity.textHeight || entity.height || 10;
+                        updateBounds(pos.x + size * 10, pos.y + size);
+                    }
+                    break;
+                case 'INSERT':
+                    if (entity.position) {
+                        updateBounds(entity.position.x - 10, entity.position.y - 10);
+                        updateBounds(entity.position.x + 10, entity.position.y + 10);
+                    }
+                    break;
+                case 'SPLINE':
+                    if (entity.controlPoints) {
+                        entity.controlPoints.forEach(cp => updateBounds(cp.x, cp.y));
+                    }
+                    break;
+                case 'ELLIPSE':
+                    if (entity.center && entity.majorAxisEndPoint) {
+                        const rx = Math.sqrt(entity.majorAxisEndPoint.x ** 2 + entity.majorAxisEndPoint.y ** 2);
+                        const ry = rx * (entity.axisRatio || 1);
+                        updateBounds(entity.center.x - rx, entity.center.y - ry);
+                        updateBounds(entity.center.x + rx, entity.center.y + ry);
+                    }
+                    break;
+                default:
+                    return null;
+            }
+        } catch (e) {
+            return null;
+        }
+        
+        if (!isFinite(minX) || !isFinite(maxX)) return null;
+        
+        return { minX, minY, maxX, maxY };
+    }
+    
+    /**
+     * 경계 박스가 현재 viewBox와 교차하는지 확인
+     */
+    isInViewport(bounds) {
+        if (!bounds) return true; // bounds 없으면 항상 렌더링
+        
+        // 여백 추가 (화면 밖 약간까지 렌더링)
+        const margin = Math.max(this.viewBox.width, this.viewBox.height) * (this.cullingMargin / 100);
+        
+        const vLeft = this.viewBox.x - margin;
+        const vRight = this.viewBox.x + this.viewBox.width + margin;
+        const vTop = this.viewBox.y - margin;
+        const vBottom = this.viewBox.y + this.viewBox.height + margin;
+        
+        // AABB 교차 테스트
+        return !(bounds.maxX < vLeft || bounds.minX > vRight || 
+                 bounds.maxY < vTop || bounds.minY > vBottom);
+    }
+    
     drawDxfSvg() {
         // SVG 초기화
         while (this.svgGroup.firstChild) {
@@ -2887,21 +3143,31 @@ class DxfPhotoEditor {
         this.svg.setAttribute('viewBox', 
             `${this.viewBox.x} ${this.viewBox.y} ${this.viewBox.width} ${this.viewBox.height}`);
         
-        this.debugLog('🖊️ SVG drawDxf() 시작, 엔티티:', this.dxfData.entities.length);
+        const totalEntities = this.dxfData.entities.length;
+        this.debugLog('🖊️ SVG drawDxf() 시작, 전체 엔티티:', totalEntities);
         
         let drawnCount = 0;
+        let culledCount = 0;
         let errorCount = 0;
         const fragment = document.createDocumentFragment();
         
         this.dxfData.entities.forEach((entity, index) => {
             try {
                 if (!entity || !entity.type) {
-                    console.warn(`엔티티 ${index}: 타입이 없습니다.`);
                     return;
+                }
+                
+                // 뷰포트 컬링: 화면 밖 엔티티 스킵
+                if (this.cullingEnabled && this.entityBounds[index]) {
+                    if (!this.isInViewport(this.entityBounds[index])) {
+                        culledCount++;
+                        return;
+                    }
                 }
                 
                 const element = this.createSvgElement(entity);
                 if (element) {
+                    element.setAttribute('data-entity-index', index);
                     fragment.appendChild(element);
                     drawnCount++;
                 }
@@ -2914,7 +3180,12 @@ class DxfPhotoEditor {
         });
         
         this.svgGroup.appendChild(fragment);
-        this.debugLog(`SVG 렌더링 완료: ${drawnCount}개 성공, ${errorCount}개 실패`);
+        this.debugLog(`SVG 렌더링 완료: ${drawnCount}개 렌더링, ${culledCount}개 컬링, ${errorCount}개 오류`);
+        
+        // 성능 로그 (대형 파일에서만)
+        if (totalEntities > 10000) {
+            console.log(`🎯 뷰포트 컬링: ${totalEntities}개 중 ${drawnCount}개만 렌더링 (${((culledCount / totalEntities) * 100).toFixed(1)}% 절감)`);
+        }
     }
     
     createSvgElement(entity) {
@@ -3986,13 +4257,31 @@ class DxfPhotoEditor {
                 Math.pow(touch.clientY - this.touchState.startY, 2)
             );
             
-            // 10px 이상 이동하면 롱프레스 취소 (드래그 이동은 비활성화 - 더블탭으로 이동)
+            // 10px 이상 이동하면 롱프레스 취소하고 드래그 시작
             if (moveDistance > 10 && this.longPressTimer) {
                 this.cancelLongPress();
+                this.touchState.isDragging = true;
             }
             
-            // 드래그 이동 비활성화 (더블탭으로 이동하도록 변경)
-            // 현재 위치만 저장 (더블탭 감지용)
+            // 단일 터치: 팬(드래그) - CSS transform 기반 (GPU 가속)
+            if (this.touchState.isDragging && this.touchState.lastTouch) {
+                // 스크린 좌표에서의 이동 거리 (픽셀)
+                const screenDeltaX = touch.clientX - this.touchState.lastTouch.x;
+                const screenDeltaY = touch.clientY - this.touchState.lastTouch.y;
+                
+                // 누적 transform offset 업데이트
+                if (!this.dragTransform) {
+                    this.dragTransform = { x: 0, y: 0 };
+                }
+                this.dragTransform.x += screenDeltaX;
+                this.dragTransform.y += screenDeltaY;
+                
+                // CSS transform으로 즉시 이동 (GPU 가속, 매우 빠름)
+                this.svg.style.transform = `translateZ(0) translate(${this.dragTransform.x}px, ${this.dragTransform.y}px)`;
+                this.canvas.style.transform = `translate(${this.dragTransform.x}px, ${this.dragTransform.y}px)`;
+            }
+            
+            // 현재 위치 저장
             this.touchState.lastTouch = { x: touch.clientX, y: touch.clientY };
             
         } else if (touches.length === 2 && this.touchState.isPinching) {
@@ -4165,6 +4454,11 @@ class DxfPhotoEditor {
                 requestAnimationFrame(() => {
                     this.drawPhotosCanvas();
                 });
+                
+                // 뷰포트 컬링: 핀치줌 완료 후 SVG 다시 그리기
+                if (this.cullingEnabled && this.entityBounds.length > 0) {
+                    this.scheduleCullingRedraw();
+                }
             }
             
         } else if (touches.length === 1) {
