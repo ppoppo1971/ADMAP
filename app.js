@@ -503,14 +503,14 @@ class DxfPhotoEditor {
         const isDoubleTap = timeDiff < this.doubleTapDelay && distance < this.doubleTapDistance;
         
         if (isDoubleTap) {
-            console.log('🎯🎯 더블탭 감지! 줌 실행...');
+            console.log('🎯🎯 더블탭 감지! 이동 + 20배 고정 확대...');
             this.clearPendingSingleTap();
             
-            // 더블탭한 위치를 ViewBox 좌표로 변환 (screenToViewBox 사용으로 정확도 향상)
+            // 더블탭한 위치를 ViewBox 좌표로 변환
             const tapCoords = this.screenToViewBox(clientX, clientY);
             
-            // 더블탭한 위치가 화면 중앙에 오도록 하고, 그 위치를 기준으로 2.5배 확대 (세분화)
-            this.zoomToPoint(tapCoords.x, tapCoords.y, 2.5);
+            // 해당 위치로 이동 + 20배 확대 고정 (originalViewBox 기준)
+            this.moveToPointWithFixedZoom(tapCoords.x, tapCoords.y, 20);
             
             // 더블탭 정보 초기화 (연속 더블탭 방지)
             this.lastTapTime = 0;
@@ -569,6 +569,44 @@ class DxfPhotoEditor {
         requestAnimationFrame(() => {
             this.updateViewBox();
             this.debugLog(`✅ 줌 완료!`);
+        });
+    }
+    
+    /**
+     * 특정 점으로 이동 + 고정 배율 확대 (더블탭용)
+     * @param {number} targetX - ViewBox 좌표 X
+     * @param {number} targetY - ViewBox 좌표 Y
+     * @param {number} fixedZoomLevel - 고정 확대 배율 (originalViewBox 기준, 예: 20 = 20배)
+     */
+    moveToPointWithFixedZoom(targetX, targetY, fixedZoomLevel) {
+        if (!this.originalViewBox) {
+            console.warn('⚠️ originalViewBox가 없습니다');
+            return;
+        }
+        
+        this.debugLog(`🎯 moveToPointWithFixedZoom 시작:`);
+        this.debugLog(`   타겟: (${targetX.toFixed(1)}, ${targetY.toFixed(1)})`);
+        this.debugLog(`   고정 확대율: ${fixedZoomLevel}배`);
+        
+        // 고정 확대율에 맞는 ViewBox 크기 계산 (originalViewBox 기준)
+        const newWidth = this.originalViewBox.width / fixedZoomLevel;
+        const newHeight = this.originalViewBox.height / fixedZoomLevel;
+        
+        // 타겟 포인트가 화면 중심에 오도록 ViewBox 조정
+        const newX = targetX - newWidth / 2;
+        const newY = targetY - newHeight / 2;
+        
+        this.viewBox = {
+            x: newX,
+            y: newY,
+            width: newWidth,
+            height: newHeight
+        };
+        
+        // ViewBox 업데이트
+        requestAnimationFrame(() => {
+            this.updateViewBox();
+            this.debugLog(`✅ 이동 + 고정 확대 완료! (×${fixedZoomLevel})`);
         });
     }
     
@@ -922,7 +960,21 @@ class DxfPhotoEditor {
             });
         });
         
-        // 전체보기는 슬라이딩 메뉴에서 처리됨
+        // 전체보기 버튼 (좌측 하단)
+        const zoomFitBtn = document.getElementById('zoom-fit');
+        if (zoomFitBtn) {
+            zoomFitBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.fitDxfToView();
+                this.redraw();
+            });
+            zoomFitBtn.addEventListener('touchstart', (e) => {
+                e.stopPropagation();
+            }, { passive: false });
+            zoomFitBtn.addEventListener('mousedown', (e) => {
+                e.stopPropagation();
+            });
+        }
         
         // 메모 모달
         const closeMemoBtn = document.getElementById('close-memo');
@@ -3874,31 +3926,13 @@ class DxfPhotoEditor {
                 Math.pow(touch.clientY - this.touchState.startY, 2)
             );
             
-            // 10px 이상 이동하면 롱프레스 취소하고 드래그 시작 (더블탭 안정성 향상)
+            // 10px 이상 이동하면 롱프레스 취소 (드래그 이동은 비활성화 - 더블탭으로 이동)
             if (moveDistance > 10 && this.longPressTimer) {
                 this.cancelLongPress();
-                this.touchState.isDragging = true;
             }
             
-            // 단일 터치: 팬(드래그) - CSS transform 기반 (GPU 가속)
-            if (this.touchState.isDragging && this.touchState.lastTouch) {
-                // 스크린 좌표에서의 이동 거리 (픽셀)
-                const screenDeltaX = touch.clientX - this.touchState.lastTouch.x;
-                const screenDeltaY = touch.clientY - this.touchState.lastTouch.y;
-                
-                // 누적 transform offset 업데이트
-                if (!this.dragTransform) {
-                    this.dragTransform = { x: 0, y: 0 };
-                }
-                this.dragTransform.x += screenDeltaX;
-                this.dragTransform.y += screenDeltaY;
-                
-                // CSS transform으로 즉시 이동 (GPU 가속, 매우 빠름)
-                this.svg.style.transform = `translateZ(0) translate(${this.dragTransform.x}px, ${this.dragTransform.y}px)`;
-                this.canvas.style.transform = `translate(${this.dragTransform.x}px, ${this.dragTransform.y}px)`;
-            }
-            
-            // 현재 위치 저장
+            // 드래그 이동 비활성화 (더블탭으로 이동하도록 변경)
+            // 현재 위치만 저장 (더블탭 감지용)
             this.touchState.lastTouch = { x: touch.clientX, y: touch.clientY };
             
         } else if (touches.length === 2 && this.touchState.isPinching) {
