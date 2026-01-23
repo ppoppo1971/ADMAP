@@ -122,9 +122,9 @@ class DxfPhotoEditor {
         this.texts = []; // { id, x, y, text, fontSize }
         this.metadataDirty = false;
         
-        // 이미지 용량 설정 (기본값: 500KB)
-        // '500KB', '1MB', 'original' 중 하나
-        this.imageSizeSetting = localStorage.getItem('dmap:imageSize') || '500KB';
+        // 이미지 용량 설정 (기본값: 2MB)
+        // '500KB', '1MB', '2MB', 'original' 중 하나
+        this.imageSizeSetting = localStorage.getItem('dmap:imageSize') || '2MB';
         
         // 지도 관련
         this.map = null; // Google Maps 객체
@@ -509,8 +509,8 @@ class DxfPhotoEditor {
             // 더블탭한 위치를 ViewBox 좌표로 변환 (screenToViewBox 사용으로 정확도 향상)
             const tapCoords = this.screenToViewBox(clientX, clientY);
             
-            // 더블탭한 위치가 화면 중앙에 오도록 하고, 그 위치를 기준으로 5배 확대
-            this.zoomToPoint(tapCoords.x, tapCoords.y, 5.0);
+            // 더블탭한 위치가 화면 중앙에 오도록 하고, 그 위치를 기준으로 2.5배 확대 (세분화)
+            this.zoomToPoint(tapCoords.x, tapCoords.y, 2.5);
             
             // 더블탭 정보 초기화 (연속 더블탭 방지)
             this.lastTapTime = 0;
@@ -902,14 +902,14 @@ class DxfPhotoEditor {
         
         zoomInBtn.addEventListener('click', (e) => {
             e.stopPropagation();
-            // 확대 단계를 2.5배로 증가: 1.2 * 2.5 = 3.0
-            this.zoom(3.0);
+            // 확대 단계 세분화: 1.5배 확대
+            this.zoom(1.5);
         });
         
         zoomOutBtn.addEventListener('click', (e) => {
             e.stopPropagation();
-            // 축소 단계를 2.5배로 증가: 0.8 / 2.5 = 0.32 (또는 1/3.0 = 0.333)
-            this.zoom(1/3.0);
+            // 축소 단계 세분화: 1/1.5배 축소
+            this.zoom(1/1.5);
         });
         
         // 줌 버튼 터치 이벤트에서 롱프레스 방지
@@ -2627,6 +2627,9 @@ class DxfPhotoEditor {
                     // 핀치줌 중에도 사진을 함께 렌더링 (도면과 동기화)
                     // Canvas 원 그리기는 매우 가벼워서 성능 영향 미미
                     this.drawPhotosCanvas();
+                    
+                    // 줌 레벨 표시 업데이트
+                    this.updateZoomLevelDisplay();
                 });
             } else {
                 // 너무 빈번한 업데이트는 스킵
@@ -2644,9 +2647,36 @@ class DxfPhotoEditor {
                 // Canvas 사진만 다시 그리기 (빠름)
                 this.drawPhotosCanvas();
                 
+                // 줌 레벨 표시 업데이트
+                this.updateZoomLevelDisplay();
+                
                 // 지도 동기화는 드래그/줌 종료 시점에만 수행 (성능 최적화)
             });
         }
+    }
+    
+    /**
+     * 줌 레벨 표시 업데이트 (우측 하단)
+     * originalViewBox 대비 현재 viewBox의 확대 배율 계산
+     */
+    updateZoomLevelDisplay() {
+        const zoomDisplay = document.getElementById('zoom-level-display');
+        if (!zoomDisplay || !this.originalViewBox) return;
+        
+        // 확대 배율 계산: originalViewBox.width / viewBox.width
+        const zoomLevel = this.originalViewBox.width / this.viewBox.width;
+        
+        // 표시 형식: ×1.0, ×2.5, ×10.0 등
+        let displayText;
+        if (zoomLevel >= 10) {
+            displayText = `×${zoomLevel.toFixed(0)}`;
+        } else if (zoomLevel >= 1) {
+            displayText = `×${zoomLevel.toFixed(1)}`;
+        } else {
+            displayText = `×${zoomLevel.toFixed(2)}`;
+        }
+        
+        zoomDisplay.textContent = displayText;
     }
     
     /**
@@ -2688,6 +2718,9 @@ class DxfPhotoEditor {
             this.debugLog('         사진 개수:', this.photos.length);
             this.debugLog('         텍스트 개수:', this.texts.length);
             this.drawPhotosCanvas();
+            
+            // 3. 줌 레벨 표시 업데이트
+            this.updateZoomLevelDisplay();
             
             this.debugLog('   ✅ redraw 완료');
         });

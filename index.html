@@ -485,6 +485,22 @@ DMAP - DXF 도면 사진 편집기 (UI)
             align-items: center !important;
             justify-content: center !important;
             transition: background 0.15s ease-out !important;
+        }
+
+        /* 줌 레벨 표시 (우측 하단) */
+        .zoom-level-display {
+            position: fixed !important;
+            bottom: 20px !important;
+            right: 20px !important;
+            background: rgba(0, 0, 0, 0.7) !important;
+            color: white !important;
+            padding: 8px 14px !important;
+            border-radius: 20px !important;
+            font-size: 14px !important;
+            font-weight: bold !important;
+            z-index: 9998 !important;
+            pointer-events: none !important;
+            font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif !important;
             /* 컨텍스트 메뉴 방지 */
             user-select: none !important;
             -webkit-user-select: none !important;
@@ -928,6 +944,9 @@ DMAP - DXF 도면 사진 편집기 (UI)
             <button class="zoom-btn" id="zoom-in">+</button>
             <button class="zoom-btn" id="zoom-out">−</button>
         </div>
+        
+        <!-- 줌 레벨 표시 (우측 하단) -->
+        <div class="zoom-level-display" id="zoom-level-display">×1.0</div>
         
     </div>
     
