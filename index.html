@@ -945,6 +945,9 @@ DMAP - DXF 도면 사진 편집기 (UI)
         <button class="slide-menu-item" id="menu-export-data">
             자료 내보내기
         </button>
+        <button class="slide-menu-item" id="menu-delete-data">
+            자료 삭제
+        </button>
         <button class="slide-menu-item" id="menu-image-size">
             용량조정
         </button>
@@ -1073,6 +1076,32 @@ DMAP - DXF 도면 사진 편집기 (UI)
                     <strong>원본</strong>
                     <br><span style="font-size: 12px; opacity: 0.8;">최고 화질, 큰 용량 (압축 없음)</span>
                 </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 자료 삭제 모달 -->
+    <div class="text-input-modal" id="delete-data-modal">
+        <div class="text-input-content">
+            <div class="modal-header">
+                <h3>🧹 자료 삭제</h3>
+                <span class="close-btn" id="delete-data-close">&times;</span>
+            </div>
+            <div class="info-box">
+                선택한 날짜 범위의 사진과 메타데이터를 로컬에서 삭제합니다.
+                <br>삭제 후 복구할 수 없습니다.
+            </div>
+            <div class="form-group">
+                <label>시작 날짜</label>
+                <input type="date" id="delete-start-date">
+            </div>
+            <div class="form-group">
+                <label>종료 날짜</label>
+                <input type="date" id="delete-end-date">
+            </div>
+            <div class="text-input-buttons">
+                <button class="btn-cancel" id="delete-data-cancel">취소</button>
+                <button class="btn-save" id="delete-data-confirm">삭제</button>
             </div>
         </div>
     </div>

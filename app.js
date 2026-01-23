@@ -721,6 +721,7 @@ class DxfPhotoEditor {
         const menuFitViewBtn = document.getElementById('menu-fit-view');
         const menuCheckMissingBtn = document.getElementById('menu-check-missing');
         const menuExportDataBtn = document.getElementById('menu-export-data');
+        const menuDeleteDataBtn = document.getElementById('menu-delete-data');
         const menuImageSizeBtn = document.getElementById('menu-image-size');
         const menuConsoleBtn = document.getElementById('menu-console');
         
@@ -768,6 +769,14 @@ class DxfPhotoEditor {
                 e.stopPropagation();
                 this.closeSlideMenu();
                 await this.exportLocalData();
+            });
+        }
+
+        if (menuDeleteDataBtn) {
+            menuDeleteDataBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.closeSlideMenu();
+                this.showDeleteDataModal();
             });
         }
         
@@ -824,7 +833,7 @@ class DxfPhotoEditor {
         }
         
         // 메뉴 아이템들 터치 이벤트에서 롱프레스 방지
-        [menuBackBtn, menuFitViewBtn, menuCheckMissingBtn, menuExportDataBtn, menuImageSizeBtn, menuConsoleBtn].forEach(btn => {
+        [menuBackBtn, menuFitViewBtn, menuCheckMissingBtn, menuExportDataBtn, menuDeleteDataBtn, menuImageSizeBtn, menuConsoleBtn].forEach(btn => {
             if (btn) {
                 btn.addEventListener('touchstart', (e) => {
                     e.stopPropagation();
@@ -1099,6 +1108,38 @@ class DxfPhotoEditor {
             imageSizeModal.addEventListener('click', (e) => {
                 if (e.target === imageSizeModal) {
                     this.closeImageSizeModal();
+                }
+            });
+        }
+
+        // 자료 삭제 모달 이벤트 리스너
+        const deleteDataModal = document.getElementById('delete-data-modal');
+        const deleteDataCloseBtn = document.getElementById('delete-data-close');
+        const deleteDataCancelBtn = document.getElementById('delete-data-cancel');
+        const deleteDataConfirmBtn = document.getElementById('delete-data-confirm');
+
+        if (deleteDataCloseBtn) {
+            deleteDataCloseBtn.addEventListener('click', () => {
+                this.hideDeleteDataModal();
+            });
+        }
+
+        if (deleteDataCancelBtn) {
+            deleteDataCancelBtn.addEventListener('click', () => {
+                this.hideDeleteDataModal();
+            });
+        }
+
+        if (deleteDataConfirmBtn) {
+            deleteDataConfirmBtn.addEventListener('click', async () => {
+                await this.deleteDataByDateRange();
+            });
+        }
+
+        if (deleteDataModal) {
+            deleteDataModal.addEventListener('click', (e) => {
+                if (e.target === deleteDataModal) {
+                    this.hideDeleteDataModal();
                 }
             });
         }
@@ -1465,7 +1506,8 @@ class DxfPhotoEditor {
             x: this.longPressPosition.x,
             y: this.longPressPosition.y,
             text: text,
-            fontSize: 50 // 고정 크기 (AutoCAD 호환용, 웹에서는 18px로 표시)
+            fontSize: 50, // 고정 크기 (AutoCAD 호환용, 웹에서는 18px로 표시)
+            createdAt: new Date().toISOString()
         };
         
         this.texts.push(textObj);
@@ -1643,6 +1685,120 @@ class DxfPhotoEditor {
         } catch (error) {
             console.error('❌ 내보내기 실패:', error);
             this.showToast('⚠️ 내보내기 실패: ' + error.message);
+        }
+    }
+
+    showDeleteDataModal() {
+        const modal = document.getElementById('delete-data-modal');
+        const startInput = document.getElementById('delete-start-date');
+        const endInput = document.getElementById('delete-end-date');
+
+        if (!modal || !startInput || !endInput) {
+            console.warn('⚠️ 자료 삭제 모달 요소를 찾을 수 없습니다');
+            return;
+        }
+
+        const today = new Date();
+        const yyyy = today.getFullYear();
+        const mm = String(today.getMonth() + 1).padStart(2, '0');
+        const dd = String(today.getDate()).padStart(2, '0');
+        const todayStr = `${yyyy}-${mm}-${dd}`;
+
+        if (!startInput.value) {
+            startInput.value = todayStr;
+        }
+        if (!endInput.value) {
+            endInput.value = todayStr;
+        }
+
+        modal.classList.add('active');
+    }
+
+    hideDeleteDataModal() {
+        const modal = document.getElementById('delete-data-modal');
+        if (modal) {
+            modal.classList.remove('active');
+        }
+    }
+
+    async deleteDataByDateRange() {
+        const startInput = document.getElementById('delete-start-date');
+        const endInput = document.getElementById('delete-end-date');
+
+        if (!startInput || !endInput) {
+            return;
+        }
+
+        const startValue = startInput.value;
+        const endValue = endInput.value;
+
+        if (!startValue || !endValue) {
+            alert('삭제할 날짜 범위를 선택하세요.');
+            return;
+        }
+
+        if (!this.dxfFileFullName) {
+            this.showToast('⚠️ 먼저 DXF 파일을 여세요.');
+            return;
+        }
+
+        const startDate = new Date(`${startValue}T00:00:00`);
+        const endDate = new Date(`${endValue}T23:59:59.999`);
+
+        if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
+            alert('날짜 형식이 올바르지 않습니다.');
+            return;
+        }
+
+        if (startDate > endDate) {
+            alert('시작 날짜가 종료 날짜보다 늦습니다.');
+            return;
+        }
+
+        if (!confirm('선택한 날짜 범위의 사진과 메타데이터를 삭제하시겠습니까?\n복구할 수 없습니다.')) {
+            return;
+        }
+
+        try {
+            await this.ensureLocalStore();
+            const deletedIds = await window.localStore.deletePhotosByDateRange(
+                this.dxfFileFullName,
+                startDate.getTime(),
+                endDate.getTime()
+            );
+
+            const beforeTextCount = this.texts.length;
+            this.texts = this.texts.filter((text) => {
+                if (!text.createdAt) {
+                    return true;
+                }
+                const createdMs = new Date(text.createdAt).getTime();
+                return createdMs < startDate.getTime() || createdMs > endDate.getTime();
+            });
+            const deletedTextCount = beforeTextCount - this.texts.length;
+
+            if (deletedIds.length === 0 && deletedTextCount === 0) {
+                this.showToast('ℹ️ 삭제할 데이터가 없습니다.');
+                return;
+            }
+
+            const deletedIdSet = new Set(deletedIds.map(id => String(id)));
+            this.photos = this.photos.filter(photo => !deletedIdSet.has(String(photo.id)));
+
+            if (this.selectedPhotoId && deletedIdSet.has(String(this.selectedPhotoId))) {
+                this.selectedPhotoId = null;
+                this.closePhotoViewModal();
+            }
+
+            this.metadataDirty = true;
+            await this.autoSave(true);
+            this.redraw();
+
+            this.showToast(`✅ 사진 ${deletedIds.length}개, 텍스트 ${deletedTextCount}개 삭제 완료`);
+            this.hideDeleteDataModal();
+        } catch (error) {
+            console.error('❌ 자료 삭제 실패:', error);
+            this.showToast('⚠️ 삭제 실패: ' + error.message);
         }
     }
     

@@ -142,6 +142,32 @@
         });
     }
 
+    async function deletePhotosByDateRange(dxfFile, startMs, endMs) {
+        const photos = await loadPhotos(dxfFile);
+        const toDelete = photos.filter((photo) => {
+            if (!photo.createdAt) {
+                return false;
+            }
+            const createdMs = new Date(photo.createdAt).getTime();
+            return createdMs >= startMs && createdMs <= endMs;
+        });
+
+        if (toDelete.length === 0) {
+            return [];
+        }
+
+        const db = await getDb();
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction(PHOTO_STORE, 'readwrite');
+            const store = tx.objectStore(PHOTO_STORE);
+            toDelete.forEach((photo) => {
+                store.delete(String(photo.id));
+            });
+            tx.oncomplete = () => resolve(toDelete.map(photo => photo.id));
+            tx.onerror = () => reject(tx.error);
+        });
+    }
+
     function dataUrlToBlob(dataUrl) {
         const [header, base64] = dataUrl.split(',');
         const mimeMatch = header.match(/data:(.*?);base64/);
@@ -355,6 +381,7 @@
         getPhotoById,
         updatePhotoMemo,
         deletePhoto,
+        deletePhotosByDateRange,
         dataUrlToBlob,
         exportProjectZip,
         getPhotoDataUrl
