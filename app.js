@@ -124,6 +124,22 @@ class DxfPhotoEditor {
         // '500KB', '1MB', '2MB', 'original' 중 하나
         this.imageSizeSetting = localStorage.getItem('dmap:imageSize') || '2MB';
         
+        // 절대적 범위 확대 단계 (밀리미터 단위)
+        // 전체보기 → 500m → 200m → 100m → 50m → 20m → 10m → 5m → 2m → 1m
+        this.zoomRanges = [
+            500000,  // 500m
+            200000,  // 200m
+            100000,  // 100m
+            50000,   // 50m
+            20000,   // 20m (더블탭 기본값)
+            10000,   // 10m
+            5000,    // 5m
+            2000,    // 2m
+            1000     // 1m
+        ];
+        this.defaultZoomRange = 20000; // 더블탭 시 20m 범위
+        this.currentRangeIndex = -1; // -1 = 전체보기
+        
         // 렌더링 최적화
         this.redrawPending = false;
         this.updatePending = false;
@@ -482,14 +498,14 @@ class DxfPhotoEditor {
         const isDoubleTap = timeDiff < this.doubleTapDelay && distance < this.doubleTapDistance;
         
         if (isDoubleTap) {
-            this.debugLog('🎯🎯 더블탭 감지! 이동 + 20배 고정 확대...');
+            this.debugLog('🎯🎯 더블탭 감지! 이동 + 20m 고정 범위...');
             this.clearPendingSingleTap();
             
             // 더블탭한 위치를 ViewBox 좌표로 변환
             const tapCoords = this.screenToViewBox(clientX, clientY);
             
-            // 해당 위치로 이동 + 20배 확대 고정 (originalViewBox 기준)
-            this.moveToPointWithFixedZoom(tapCoords.x, tapCoords.y, 20);
+            // 해당 위치로 이동 + 20m 고정 범위 (절대적 범위)
+            this.moveToPointWithFixedRange(tapCoords.x, tapCoords.y, this.defaultZoomRange);
             
             // 더블탭 정보 초기화 (연속 더블탭 방지)
             this.lastTapTime = 0;
@@ -552,24 +568,30 @@ class DxfPhotoEditor {
     }
     
     /**
-     * 특정 점으로 이동 + 고정 배율 확대 (더블탭용)
+     * 특정 점으로 이동 + 고정 범위 확대 (더블탭용)
      * @param {number} targetX - ViewBox 좌표 X
      * @param {number} targetY - ViewBox 좌표 Y
-     * @param {number} fixedZoomLevel - 고정 확대 배율 (originalViewBox 기준, 예: 20 = 20배)
+     * @param {number} rangeSize - 고정 범위 크기 (mm 단위, 예: 20000 = 20m)
      */
-    moveToPointWithFixedZoom(targetX, targetY, fixedZoomLevel) {
-        if (!this.originalViewBox) {
-            console.warn('⚠️ originalViewBox가 없습니다');
-            return;
-        }
-        
-        this.debugLog(`🎯 moveToPointWithFixedZoom 시작:`);
+    moveToPointWithFixedRange(targetX, targetY, rangeSize) {
+        this.debugLog(`🎯 moveToPointWithFixedRange 시작:`);
         this.debugLog(`   타겟: (${targetX.toFixed(1)}, ${targetY.toFixed(1)})`);
-        this.debugLog(`   고정 확대율: ${fixedZoomLevel}배`);
+        this.debugLog(`   고정 범위: ${rangeSize / 1000}m`);
         
-        // 고정 확대율에 맞는 ViewBox 크기 계산 (originalViewBox 기준)
-        const newWidth = this.originalViewBox.width / fixedZoomLevel;
-        const newHeight = this.originalViewBox.height / fixedZoomLevel;
+        // 화면 비율 유지하며 고정 범위 적용
+        const rect = this.getCachedRect();
+        const aspectRatio = rect.width / rect.height;
+        
+        let newWidth, newHeight;
+        if (aspectRatio >= 1) {
+            // 가로가 더 긴 경우
+            newWidth = rangeSize;
+            newHeight = rangeSize / aspectRatio;
+        } else {
+            // 세로가 더 긴 경우
+            newHeight = rangeSize;
+            newWidth = rangeSize * aspectRatio;
+        }
         
         // 타겟 포인트가 화면 중심에 오도록 ViewBox 조정
         const newX = targetX - newWidth / 2;
@@ -582,11 +604,36 @@ class DxfPhotoEditor {
             height: newHeight
         };
         
+        // 현재 범위 인덱스 업데이트
+        this.currentRangeIndex = this.zoomRanges.indexOf(rangeSize);
+        if (this.currentRangeIndex === -1) {
+            // 정확한 범위가 아니면 가장 가까운 범위 찾기
+            this.currentRangeIndex = this.findClosestRangeIndex(newWidth);
+        }
+        
         // ViewBox 업데이트
         requestAnimationFrame(() => {
             this.updateViewBox();
-            this.debugLog(`✅ 이동 + 고정 확대 완료! (×${fixedZoomLevel})`);
+            this.debugLog(`✅ 이동 + 고정 범위 완료! (${rangeSize / 1000}m)`);
         });
+    }
+    
+    /**
+     * 현재 viewBox 크기와 가장 가까운 범위 인덱스 찾기
+     */
+    findClosestRangeIndex(currentWidth) {
+        let closestIndex = -1;
+        let minDiff = Infinity;
+        
+        for (let i = 0; i < this.zoomRanges.length; i++) {
+            const diff = Math.abs(this.zoomRanges[i] - currentWidth);
+            if (diff < minDiff) {
+                minDiff = diff;
+                closestIndex = i;
+            }
+        }
+        
+        return closestIndex;
     }
     
     init() {
@@ -919,14 +966,14 @@ class DxfPhotoEditor {
         
         zoomInBtn.addEventListener('click', (e) => {
             e.stopPropagation();
-            // 확대 단계 세분화: 1.5배 확대
-            this.zoom(1.5);
+            // 확대: 다음 단계 (더 좁은 범위)
+            this.zoom(1);
         });
         
         zoomOutBtn.addEventListener('click', (e) => {
             e.stopPropagation();
-            // 축소 단계 세분화: 1/1.5배 축소
-            this.zoom(1/1.5);
+            // 축소: 이전 단계 (더 넓은 범위)
+            this.zoom(-1);
         });
         
         // 줌 버튼 터치 이벤트에서 롱프레스 방지
@@ -2602,10 +2649,14 @@ class DxfPhotoEditor {
             // 원본 ViewBox 저장 (확대율 계산용)
             this.originalViewBox = {...this.viewBox};
             
+            // 전체보기 상태로 설정
+            this.currentRangeIndex = -1;
+            
             console.log(`ViewBox 설정:`, this.viewBox);
         } else {
             console.warn('도면 크기가 0입니다. 기본 뷰 사용.');
             this.viewBox = { x: -500, y: -500, width: 1000, height: 1000 };
+            this.currentRangeIndex = -1;
         }
     }
     
@@ -2688,48 +2739,61 @@ class DxfPhotoEditor {
     
     /**
      * 줌 레벨 표시 업데이트 (우측 하단)
-     * originalViewBox 대비 현재 viewBox의 확대 배율 계산
-     * + 확대율에 따라 선 두께 CSS 변수 동적 조정
+     * 현재 viewBox 범위를 미터 단위로 표시
+     * + 범위에 따라 선 두께 CSS 변수 동적 조정
      */
     updateZoomLevelDisplay() {
         const zoomDisplay = document.getElementById('zoom-level-display');
-        if (!zoomDisplay || !this.originalViewBox) return;
+        if (!zoomDisplay) return;
         
-        // 확대 배율 계산: originalViewBox.width / viewBox.width
-        const zoomLevel = this.originalViewBox.width / this.viewBox.width;
+        // 현재 viewBox 너비 (mm 단위)
+        const rangeWidth = this.viewBox.width;
         
-        // 표시 형식: ×1.0, ×2.5, ×10.0 등
+        // 미터로 변환하여 표시
+        const rangeMeters = rangeWidth / 1000;
+        
         let displayText;
-        if (zoomLevel >= 10) {
-            displayText = `×${zoomLevel.toFixed(0)}`;
-        } else if (zoomLevel >= 1) {
-            displayText = `×${zoomLevel.toFixed(1)}`;
+        if (rangeMeters >= 1000) {
+            // 1km 이상
+            displayText = `${(rangeMeters / 1000).toFixed(1)}km`;
+        } else if (rangeMeters >= 10) {
+            // 10m 이상
+            displayText = `${rangeMeters.toFixed(0)}m`;
+        } else if (rangeMeters >= 1) {
+            // 1m 이상
+            displayText = `${rangeMeters.toFixed(1)}m`;
         } else {
-            displayText = `×${zoomLevel.toFixed(2)}`;
+            // 1m 미만
+            displayText = `${(rangeMeters * 100).toFixed(0)}cm`;
         }
         
         zoomDisplay.textContent = displayText;
         
-        // ⭐ 확대율 12배 이상이면 선 두께 배율 증가 (가독성 향상)
-        this.updateStrokeWidth(zoomLevel);
+        // ⭐ 범위에 따라 선 두께 배율 증가 (가독성 향상)
+        // 20m(20000mm) 이하일 때 선 두께 증가
+        this.updateStrokeWidth(rangeWidth);
     }
     
     /**
-     * 확대율에 따라 SVG 선 두께 CSS 변수 동적 조정
-     * 12배 이상 확대 시 선이 점점 두꺼워져서 가독성 유지
-     * @param {number} zoomLevel - 현재 확대 배율
+     * 범위에 따라 SVG 선 두께 CSS 변수 동적 조정
+     * 20m 이하 범위에서 선이 점점 두꺼워져서 가독성 유지
+     * @param {number} rangeWidth - 현재 viewBox 너비 (mm 단위)
      */
-    updateStrokeWidth(zoomLevel) {
-        // 12배 미만: 기본 배율 (1)
-        // 12배 이상: 확대율에 비례하여 선 두께 증가
+    updateStrokeWidth(rangeWidth) {
+        // 20m(20000mm) 이상: 기본 배율 (1)
+        // 20m 미만: 범위에 반비례하여 선 두께 증가
         let strokeMultiplier;
         
-        if (zoomLevel < 12) {
+        const baseRange = 20000; // 기준 범위: 20m
+        
+        if (rangeWidth >= baseRange) {
             strokeMultiplier = 1;
         } else {
-            // 12배 이상: (zoomLevel / 12)로 배율 증가
-            // 예: 12배 → 1, 24배 → 2, 36배 → 3
-            strokeMultiplier = zoomLevel / 12;
+            // 20m 미만: (20000 / rangeWidth)로 배율 증가
+            // 예: 20m → 1, 10m → 2, 5m → 4, 2m → 10
+            strokeMultiplier = baseRange / rangeWidth;
+            // 최대 10배로 제한
+            strokeMultiplier = Math.min(strokeMultiplier, 10);
         }
         
         // CSS 변수 업데이트 (모든 SVG 요소에 자동 적용)
@@ -4518,29 +4582,39 @@ class DxfPhotoEditor {
     }
     
     /**
-     * 줌 (ViewBox 중심점 기준)
-     * @param {number} factor - 줌 배율 (1보다 크면 확대, 1보다 작으면 축소)
+     * 줌 - 고정 범위 단계로 이동
+     * @param {number} direction - 1: 확대 (다음 단계), -1: 축소 (이전 단계)
      */
-    zoom(factor) {
-        // 지도 모드가 아닐 때만 직접 줌 수행
-        if (!this.isMapMode) {
-            // ViewBox 중심점 계산
-            const centerX = this.viewBox.x + this.viewBox.width / 2;
-            const centerY = this.viewBox.y + this.viewBox.height / 2;
-            
-            // zoomAt 메서드 사용 (중심점 기준 확대)
-            this.zoomAt(centerX, centerY, factor);
+    zoom(direction) {
+        // 현재 범위 인덱스 결정
+        if (this.currentRangeIndex === -1) {
+            // 전체보기 상태에서 시작
+            this.currentRangeIndex = this.findClosestRangeIndex(this.viewBox.width);
+        }
+        
+        // 새 인덱스 계산
+        let newIndex;
+        if (direction > 0) {
+            // 확대: 인덱스 증가 (범위 감소)
+            newIndex = Math.min(this.currentRangeIndex + 1, this.zoomRanges.length - 1);
         } else {
-            // 지도 모드일 때는 지도 줌을 사용 (지도가 viewBox를 동기화)
-            if (this.map && this.dxfBoundsWGS84) {
-                const currentZoom = this.map.getZoom();
-                if (currentZoom !== null && currentZoom !== undefined) {
-                    // factor > 1: 확대 (줌 레벨 증가)
-                    // factor < 1: 축소 (줌 레벨 감소)
-                    const newZoom = currentZoom + (factor > 1 ? 1 : -1);
-                    this.map.setZoom(newZoom);
-                }
-            }
+            // 축소: 인덱스 감소 (범위 증가)
+            newIndex = this.currentRangeIndex - 1;
+        }
+        
+        // ViewBox 중심점 유지
+        const centerX = this.viewBox.x + this.viewBox.width / 2;
+        const centerY = this.viewBox.y + this.viewBox.height / 2;
+        
+        if (newIndex < 0) {
+            // 전체보기로 이동
+            this.fitDxfToView();
+            this.currentRangeIndex = -1;
+            this.redraw();
+        } else {
+            // 고정 범위로 이동
+            const rangeSize = this.zoomRanges[newIndex];
+            this.moveToPointWithFixedRange(centerX, centerY, rangeSize);
         }
     }
     
