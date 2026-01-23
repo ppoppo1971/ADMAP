@@ -1,320 +1,362 @@
 /**
  * ========================================
- * DMAP - 로컬 저장소 관리 모듈 (IndexedDB)
+ * DMAP - 로컬 저장소 모듈 (IndexedDB)
  * ========================================
- * 
- * 용도:
- *   - Android에서 사진과 메타데이터를 IndexedDB에 저장
- *   - 실시간 저장으로 데이터 누락 방지
- *   - 다운로드 폴더로 내보내기 기능
- * 
- * 주요 기능:
- *   1. IndexedDB 초기화 및 관리
- *   2. 사진 저장/로드
- *   3. 메타데이터 저장/로드
- *   4. 다운로드 폴더로 내보내기
- * 
- * 버전: 1.0.0
- * 최종 수정: 2025-01-22
- * ========================================
+ * - 사진/메타데이터를 로컬에 영구 저장
+ * - ZIP 내보내기 (사진 + 메타데이터)
  */
+(() => {
+    const DB_NAME = 'dmap-local';
+    const DB_VERSION = 1;
+    const PROJECT_STORE = 'projects';
+    const PHOTO_STORE = 'photos';
 
-/**
- * IndexedDB 관리 클래스
- */
-class LocalStorageManager {
-    constructor() {
-        this.dbName = 'dmap-local-storage';
-        this.dbVersion = 1;
-        this.db = null;
-    }
+    let dbPromise = null;
 
-    /**
-     * IndexedDB 초기화
-     */
-    async init() {
+    function openDb() {
         return new Promise((resolve, reject) => {
-            const request = indexedDB.open(this.dbName, this.dbVersion);
+            const request = indexedDB.open(DB_NAME, DB_VERSION);
 
-            request.onerror = () => {
-                console.error('❌ IndexedDB 초기화 실패:', request.error);
-                reject(request.error);
-            };
+            request.onupgradeneeded = () => {
+                const db = request.result;
 
-            request.onsuccess = () => {
-                this.db = request.result;
-                console.log('✅ IndexedDB 초기화 완료');
-                resolve(this.db);
-            };
-
-            request.onupgradeneeded = (event) => {
-                const db = event.target.result;
-
-                // 사진 저장소
-                if (!db.objectStoreNames.contains('photos')) {
-                    const photoStore = db.createObjectStore('photos', { keyPath: 'id' });
-                    photoStore.createIndex('dxfFileName', 'dxfFileName', { unique: false });
-                    photoStore.createIndex('fileName', 'fileName', { unique: false });
+                if (!db.objectStoreNames.contains(PROJECT_STORE)) {
+                    db.createObjectStore(PROJECT_STORE, { keyPath: 'dxfFile' });
                 }
 
-                // 메타데이터 저장소
-                if (!db.objectStoreNames.contains('metadata')) {
-                    const metadataStore = db.createObjectStore('metadata', { keyPath: 'dxfFileName' });
+                if (!db.objectStoreNames.contains(PHOTO_STORE)) {
+                    const store = db.createObjectStore(PHOTO_STORE, { keyPath: 'id' });
+                    store.createIndex('dxfFile', 'dxfFile', { unique: false });
                 }
-
-                console.log('✅ IndexedDB 스키마 생성 완료');
             };
+
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
         });
     }
 
-    /**
-     * 사진 저장
-     */
-    async savePhoto(photo, dxfFileName) {
-        if (!this.db) {
-            await this.init();
+    async function getDb() {
+        if (!dbPromise) {
+            dbPromise = openDb();
+        }
+        return dbPromise;
+    }
+
+    async function init() {
+        await getDb();
+        return true;
+    }
+
+    async function saveProject(dxfFile, data) {
+        const db = await getDb();
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction(PROJECT_STORE, 'readwrite');
+            const store = tx.objectStore(PROJECT_STORE);
+            store.put({
+                dxfFile,
+                texts: data.texts || [],
+                lastModified: data.lastModified || new Date().toISOString()
+            });
+            tx.oncomplete = () => resolve(true);
+            tx.onerror = () => reject(tx.error);
+        });
+    }
+
+    async function loadProject(dxfFile) {
+        const db = await getDb();
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction(PROJECT_STORE, 'readonly');
+            const store = tx.objectStore(PROJECT_STORE);
+            const request = store.get(dxfFile);
+            request.onsuccess = () => resolve(request.result || null);
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    async function savePhoto(dxfFile, photo) {
+        const db = await getDb();
+        const id = String(photo.id);
+        const record = {
+            id,
+            dxfFile,
+            fileName: photo.fileName || '',
+            memo: photo.memo || '',
+            x: photo.x,
+            y: photo.y,
+            width: photo.width,
+            height: photo.height,
+            blob: photo.blob,
+            createdAt: photo.createdAt || new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+        };
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction(PHOTO_STORE, 'readwrite');
+            tx.objectStore(PHOTO_STORE).put(record);
+            tx.oncomplete = () => resolve(true);
+            tx.onerror = () => reject(tx.error);
+        });
+    }
+
+    async function loadPhotos(dxfFile) {
+        const db = await getDb();
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction(PHOTO_STORE, 'readonly');
+            const index = tx.objectStore(PHOTO_STORE).index('dxfFile');
+            const request = index.getAll(dxfFile);
+            request.onsuccess = () => resolve(request.result || []);
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    async function getPhotoById(id) {
+        const db = await getDb();
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction(PHOTO_STORE, 'readonly');
+            const request = tx.objectStore(PHOTO_STORE).get(String(id));
+            request.onsuccess = () => resolve(request.result || null);
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    async function updatePhotoMemo(id, memo) {
+        const record = await getPhotoById(id);
+        if (!record) return false;
+        record.memo = memo || '';
+        record.updatedAt = new Date().toISOString();
+        const db = await getDb();
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction(PHOTO_STORE, 'readwrite');
+            tx.objectStore(PHOTO_STORE).put(record);
+            tx.oncomplete = () => resolve(true);
+            tx.onerror = () => reject(tx.error);
+        });
+    }
+
+    async function deletePhoto(id) {
+        const db = await getDb();
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction(PHOTO_STORE, 'readwrite');
+            tx.objectStore(PHOTO_STORE).delete(String(id));
+            tx.oncomplete = () => resolve(true);
+            tx.onerror = () => reject(tx.error);
+        });
+    }
+
+    function dataUrlToBlob(dataUrl) {
+        const [header, base64] = dataUrl.split(',');
+        const mimeMatch = header.match(/data:(.*?);base64/);
+        const mimeType = mimeMatch ? mimeMatch[1] : 'application/octet-stream';
+        const binary = atob(base64);
+        const len = binary.length;
+        const bytes = new Uint8Array(len);
+        for (let i = 0; i < len; i++) {
+            bytes[i] = binary.charCodeAt(i);
+        }
+        return new Blob([bytes], { type: mimeType });
+    }
+
+    function blobToDataUrl(blob) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.onerror = reject;
+            reader.readAsDataURL(blob);
+        });
+    }
+
+    function encodeUtf8(str) {
+        return new TextEncoder().encode(str);
+    }
+
+    function crc32(bytes) {
+        const table = crc32.table || (crc32.table = (() => {
+            const t = new Uint32Array(256);
+            for (let i = 0; i < 256; i++) {
+                let c = i;
+                for (let k = 0; k < 8; k++) {
+                    c = c & 1 ? 0xedb88320 ^ (c >>> 1) : (c >>> 1);
+                }
+                t[i] = c >>> 0;
+            }
+            return t;
+        })());
+
+        let crc = 0xffffffff;
+        for (let i = 0; i < bytes.length; i++) {
+            crc = table[(crc ^ bytes[i]) & 0xff] ^ (crc >>> 8);
+        }
+        return (crc ^ 0xffffffff) >>> 0;
+    }
+
+    function toDosDateTime(date) {
+        const dt = date instanceof Date ? date : new Date();
+        const year = Math.max(1980, dt.getFullYear());
+        const month = dt.getMonth() + 1;
+        const day = dt.getDate();
+        const hours = dt.getHours();
+        const minutes = dt.getMinutes();
+        const seconds = Math.floor(dt.getSeconds() / 2);
+        const dosTime = (hours << 11) | (minutes << 5) | seconds;
+        const dosDate = ((year - 1980) << 9) | (month << 5) | day;
+        return { dosTime, dosDate };
+    }
+
+    function concatArrays(arrays, totalLength) {
+        const output = new Uint8Array(totalLength);
+        let offset = 0;
+        arrays.forEach(arr => {
+            output.set(arr, offset);
+            offset += arr.length;
+        });
+        return output;
+    }
+
+    async function createZip(entries) {
+        let offset = 0;
+        const fileParts = [];
+        const centralParts = [];
+
+        for (const entry of entries) {
+            const nameBytes = encodeUtf8(entry.name);
+            const dataBytes = new Uint8Array(await entry.blob.arrayBuffer());
+            const crc = crc32(dataBytes);
+            const size = dataBytes.length;
+            const { dosTime, dosDate } = toDosDateTime(entry.modifiedAt);
+            const flags = 0x0800; // UTF-8
+
+            const localHeader = new ArrayBuffer(30 + nameBytes.length);
+            const localView = new DataView(localHeader);
+            localView.setUint32(0, 0x04034b50, true);
+            localView.setUint16(4, 20, true);
+            localView.setUint16(6, flags, true);
+            localView.setUint16(8, 0, true);
+            localView.setUint16(10, dosTime, true);
+            localView.setUint16(12, dosDate, true);
+            localView.setUint32(14, crc, true);
+            localView.setUint32(18, size, true);
+            localView.setUint32(22, size, true);
+            localView.setUint16(26, nameBytes.length, true);
+            localView.setUint16(28, 0, true);
+            new Uint8Array(localHeader).set(nameBytes, 30);
+
+            fileParts.push(new Uint8Array(localHeader), dataBytes);
+
+            const centralHeader = new ArrayBuffer(46 + nameBytes.length);
+            const centralView = new DataView(centralHeader);
+            centralView.setUint32(0, 0x02014b50, true);
+            centralView.setUint16(4, 20, true);
+            centralView.setUint16(6, 20, true);
+            centralView.setUint16(8, flags, true);
+            centralView.setUint16(10, 0, true);
+            centralView.setUint16(12, dosTime, true);
+            centralView.setUint16(14, dosDate, true);
+            centralView.setUint32(16, crc, true);
+            centralView.setUint32(20, size, true);
+            centralView.setUint32(24, size, true);
+            centralView.setUint16(28, nameBytes.length, true);
+            centralView.setUint16(30, 0, true);
+            centralView.setUint16(32, 0, true);
+            centralView.setUint16(34, 0, true);
+            centralView.setUint16(36, 0, true);
+            centralView.setUint32(38, 0, true);
+            centralView.setUint32(42, offset, true);
+            new Uint8Array(centralHeader).set(nameBytes, 46);
+
+            centralParts.push(new Uint8Array(centralHeader));
+
+            offset += localHeader.byteLength + size;
         }
 
-        return new Promise((resolve, reject) => {
-            const transaction = this.db.transaction(['photos'], 'readwrite');
-            const store = transaction.objectStore('photos');
+        const centralSize = centralParts.reduce((sum, part) => sum + part.length, 0);
+        const centralOffset = offset;
+        const fileCount = entries.length;
 
-            // Blob으로 변환하여 저장
-            const photoData = {
+        const endRecord = new ArrayBuffer(22);
+        const endView = new DataView(endRecord);
+        endView.setUint32(0, 0x06054b50, true);
+        endView.setUint16(4, 0, true);
+        endView.setUint16(6, 0, true);
+        endView.setUint16(8, fileCount, true);
+        endView.setUint16(10, fileCount, true);
+        endView.setUint32(12, centralSize, true);
+        endView.setUint32(16, centralOffset, true);
+        endView.setUint16(20, 0, true);
+
+        const allParts = [...fileParts, ...centralParts, new Uint8Array(endRecord)];
+        const totalLength = allParts.reduce((sum, part) => sum + part.length, 0);
+        return new Blob([concatArrays(allParts, totalLength)], { type: 'application/zip' });
+    }
+
+    function normalizeBaseName(dxfFile) {
+        if (!dxfFile) return 'photo';
+        return dxfFile.replace(/\.dxf$/i, '');
+    }
+
+    async function exportProjectZip(dxfFile) {
+        const project = (await loadProject(dxfFile)) || {};
+        const photos = await loadPhotos(dxfFile);
+        const baseName = normalizeBaseName(dxfFile);
+
+        const metadata = {
+            dxfFile,
+            photos: photos.map((photo) => ({
                 id: photo.id,
-                dxfFileName: dxfFileName,
-                x: photo.x,
-                y: photo.y,
-                width: photo.width,
-                height: photo.height,
+                fileName: photo.fileName,
+                position: { x: photo.x, y: photo.y },
+                size: { width: photo.width, height: photo.height },
                 memo: photo.memo || '',
-                fileName: photo.fileName || null,
-                imageData: photo.imageData, // Base64 문자열로 저장
-                savedAt: Date.now()
-            };
+                uploaded: true
+            })),
+            texts: project.texts || [],
+            lastModified: project.lastModified || new Date().toISOString()
+        };
 
-            const request = store.put(photoData);
+        const metadataBlob = new Blob([JSON.stringify(metadata, null, 2)], { type: 'application/json' });
+        const entries = [
+            { name: `${baseName}_metadata.json`, blob: metadataBlob, modifiedAt: new Date() }
+        ];
 
-            request.onsuccess = () => {
-                console.log(`✅ 사진 저장 완료: ${photo.id}`);
-                resolve();
-            };
-
-            request.onerror = () => {
-                console.error('❌ 사진 저장 실패:', request.error);
-                reject(request.error);
-            };
+        photos.forEach((photo) => {
+            if (photo.blob && photo.fileName) {
+                entries.push({
+                    name: photo.fileName,
+                    blob: photo.blob,
+                    modifiedAt: new Date(photo.updatedAt || Date.now())
+                });
+            }
         });
+
+        const zipBlob = await createZip(entries);
+        const zipName = `${baseName}_export.zip`;
+
+        const url = URL.createObjectURL(zipBlob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = zipName;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
+        return true;
     }
 
-    /**
-     * 여러 사진 저장
-     */
-    async savePhotos(photos, dxfFileName) {
-        if (!this.db) {
-            await this.init();
-        }
-
-        const promises = photos.map(photo => this.savePhoto(photo, dxfFileName));
-        await Promise.all(promises);
-        console.log(`✅ ${photos.length}개 사진 저장 완료`);
+    async function getPhotoDataUrl(photoId) {
+        const record = await getPhotoById(photoId);
+        if (!record || !record.blob) return null;
+        return blobToDataUrl(record.blob);
     }
 
-    /**
-     * 메타데이터 저장
-     */
-    async saveMetadata(dxfFileName, metadata) {
-        if (!this.db) {
-            await this.init();
-        }
-
-        return new Promise((resolve, reject) => {
-            const transaction = this.db.transaction(['metadata'], 'readwrite');
-            const store = transaction.objectStore('metadata');
-
-            const metadataData = {
-                dxfFileName: dxfFileName,
-                data: metadata,
-                savedAt: Date.now()
-            };
-
-            const request = store.put(metadataData);
-
-            request.onsuccess = () => {
-                console.log(`✅ 메타데이터 저장 완료: ${dxfFileName}`);
-                resolve();
-            };
-
-            request.onerror = () => {
-                console.error('❌ 메타데이터 저장 실패:', request.error);
-                reject(request.error);
-            };
-        });
-    }
-
-    /**
-     * 특정 DXF 파일의 모든 사진 로드
-     */
-    async loadPhotos(dxfFileName) {
-        if (!this.db) {
-            await this.init();
-        }
-
-        return new Promise((resolve, reject) => {
-            const transaction = this.db.transaction(['photos'], 'readonly');
-            const store = transaction.objectStore('photos');
-            const index = store.index('dxfFileName');
-            const request = index.getAll(dxfFileName);
-
-            request.onsuccess = () => {
-                const photos = request.result.map(photo => ({
-                    id: photo.id,
-                    x: photo.x,
-                    y: photo.y,
-                    width: photo.width,
-                    height: photo.height,
-                    memo: photo.memo,
-                    fileName: photo.fileName,
-                    imageData: photo.imageData,
-                    savedAt: photo.savedAt,
-                    uploaded: false // 로컬 저장이므로 uploaded는 false
-                }));
-
-                console.log(`✅ ${photos.length}개 사진 로드 완료: ${dxfFileName}`);
-                resolve(photos);
-            };
-
-            request.onerror = () => {
-                console.error('❌ 사진 로드 실패:', request.error);
-                reject(request.error);
-            };
-        });
-    }
-
-    /**
-     * 메타데이터 로드
-     */
-    async loadMetadata(dxfFileName) {
-        if (!this.db) {
-            await this.init();
-        }
-
-        return new Promise((resolve, reject) => {
-            const transaction = this.db.transaction(['metadata'], 'readonly');
-            const store = transaction.objectStore('metadata');
-            const request = store.get(dxfFileName);
-
-            request.onsuccess = () => {
-                if (request.result) {
-                    console.log(`✅ 메타데이터 로드 완료: ${dxfFileName}`);
-                    resolve(request.result.data);
-                } else {
-                    console.log(`ℹ️ 메타데이터 없음: ${dxfFileName}`);
-                    resolve(null);
-                }
-            };
-
-            request.onerror = () => {
-                console.error('❌ 메타데이터 로드 실패:', request.error);
-                reject(request.error);
-            };
-        });
-    }
-    
-    /**
-     * 메타데이터 삭제
-     */
-    async deleteMetadata(dxfFileName) {
-        if (!this.db) {
-            await this.init();
-        }
-        return new Promise((resolve, reject) => {
-            const transaction = this.db.transaction(['metadata'], 'readwrite');
-            const store = transaction.objectStore('metadata');
-            const request = store.delete(dxfFileName);
-            
-            request.onsuccess = () => {
-                console.log(`✅ 메타데이터 삭제 완료: ${dxfFileName}`);
-                resolve();
-            };
-            
-            request.onerror = () => {
-                console.error('❌ 메타데이터 삭제 실패:', request.error);
-                reject(request.error);
-            };
-        });
-    }
-
-    /**
-     * 사진 삭제
-     */
-    async deletePhoto(photoId) {
-        if (!this.db) {
-            await this.init();
-        }
-
-        return new Promise((resolve, reject) => {
-            const transaction = this.db.transaction(['photos'], 'readwrite');
-            const store = transaction.objectStore('photos');
-            const request = store.delete(photoId);
-
-            request.onsuccess = () => {
-                console.log(`✅ 사진 삭제 완료: ${photoId}`);
-                resolve();
-            };
-
-            request.onerror = () => {
-                console.error('❌ 사진 삭제 실패:', request.error);
-                reject(request.error);
-            };
-        });
-    }
-
-    /**
-     * 특정 DXF 파일의 모든 데이터 삭제
-     */
-    async deleteAllData(dxfFileName) {
-        if (!this.db) {
-            await this.init();
-        }
-
-        // 사진 삭제
-        const photos = await this.loadPhotos(dxfFileName);
-        const photoPromises = photos.map(photo => this.deletePhoto(photo.id));
-        await Promise.all(photoPromises);
-
-        // 메타데이터 삭제
-        return new Promise((resolve, reject) => {
-            const transaction = this.db.transaction(['metadata'], 'readwrite');
-            const store = transaction.objectStore('metadata');
-            const request = store.delete(dxfFileName);
-
-            request.onsuccess = () => {
-                console.log(`✅ 모든 데이터 삭제 완료: ${dxfFileName}`);
-                resolve();
-            };
-
-            request.onerror = () => {
-                console.error('❌ 데이터 삭제 실패:', request.error);
-                reject(request.error);
-            };
-        });
-    }
-
-    /**
-     * Base64를 Blob으로 변환
-     */
-    base64ToBlob(base64, mimeType = 'image/jpeg') {
-        const byteCharacters = atob(base64.split(',')[1]);
-        const byteNumbers = new Array(byteCharacters.length);
-        for (let i = 0; i < byteCharacters.length; i++) {
-            byteNumbers[i] = byteCharacters.charCodeAt(i);
-        }
-        const byteArray = new Uint8Array(byteNumbers);
-        return new Blob([byteArray], { type: mimeType });
-    }
-}
-
-// 전역 인스턴스 생성
-window.localStorageManager = new LocalStorageManager();
-
+    window.localStore = {
+        init,
+        saveProject,
+        loadProject,
+        savePhoto,
+        loadPhotos,
+        getPhotoById,
+        updatePhotoMemo,
+        deletePhoto,
+        dataUrlToBlob,
+        exportProjectZip,
+        getPhotoDataUrl
+    };
+})();
