@@ -163,7 +163,10 @@ DMAP - DXF 도면 사진 편집기 (UI)
             background: transparent; /* 지도가 보이도록 투명하게 */
             cursor: grab;
             touch-action: none; /* 앱 내부에서 직접 제어 */
-            will-change: transform; /* GPU 가속 */
+            will-change: transform, contents; /* GPU 가속 */
+            contain: layout style; /* 레이아웃/스타일 격리 */
+            transform: translateZ(0); /* 강제 GPU 레이어 */
+            backface-visibility: hidden; /* 추가 GPU 최적화 */
         }
 
         #svg:active {
@@ -173,6 +176,9 @@ DMAP - DXF 도면 사진 편집기 (UI)
         #canvas {
             touch-action: none; /* 앱 내부에서 직접 제어 */
             will-change: transform; /* GPU 가속 */
+            contain: layout style; /* 레이아웃/스타일 격리 */
+            transform: translateZ(0); /* 강제 GPU 레이어 */
+            backface-visibility: hidden; /* 추가 GPU 최적화 */
         }
         
         .canvas-container {

@@ -2680,6 +2680,36 @@ class DxfPhotoEditor {
     }
     
     /**
+     * CSS transform을 viewBox로 동기화 (드래그 종료 시)
+     * GPU 가속 드래그 후 정확한 좌표로 변환
+     */
+    syncTransformToViewBox() {
+        if (!this.dragTransform) return;
+        
+        const rect = this.getCachedRect();
+        if (!rect || rect.width === 0 || rect.height === 0) return;
+        
+        // 스크린 픽셀을 viewBox 단위로 변환
+        const viewDeltaX = (this.dragTransform.x / rect.width) * this.viewBox.width;
+        const viewDeltaY = (this.dragTransform.y / rect.height) * this.viewBox.height;
+        
+        // viewBox 이동 (손가락 방향과 반대로)
+        this.viewBox.x -= viewDeltaX;
+        this.viewBox.y -= viewDeltaY;
+        
+        // CSS transform 초기화
+        this.svg.style.transform = 'translateZ(0)';
+        this.canvas.style.transform = '';
+        this.dragTransform = null;
+        
+        // viewBox 업데이트
+        this.updateViewBox();
+        
+        // rect 캐시 무효화
+        this.cachedRect = null;
+    }
+    
+    /**
      * 전체 다시 그리기 (DXF 로드, 사진 추가/삭제 시)
      * 성능 최적화: requestAnimationFrame으로 부드러운 렌더링, 중복 렌더링 방지
      * 
@@ -3792,13 +3822,22 @@ class DxfPhotoEditor {
             this.touchState.anchorView = this.screenToViewBox(touch.clientX, touch.clientY);
             this.touchState.startViewBox = {...this.viewBox};
             
+            // CSS transform 드래그 초기화
+            this.dragTransform = { x: 0, y: 0 };
+            
         } else if (touches.length === 2) {
             // 두 손가락: 핀치줌 시작
             this.cancelLongPress(); // 롱프레스 취소
             
+            // 드래그 중이었다면 transform 동기화
+            if (this.dragTransform && (this.dragTransform.x !== 0 || this.dragTransform.y !== 0)) {
+                this.syncTransformToViewBox();
+            }
+            
             this.touchState.isDragging = false;
             this.touchState.isPinching = true;
             this.touchState.anchorView = null;
+            this.dragTransform = null; // 핀치줌 중에는 transform 사용 안함
             
             // 더블탭 타이머 초기화 (핀치줌 시작 시 더블탭 오인식 방지)
             this.lastTapTime = 0;
@@ -3841,26 +3880,22 @@ class DxfPhotoEditor {
                 this.touchState.isDragging = true;
             }
             
-            // 단일 터치: 팬(드래그) - 손가락 방향과 일치
+            // 단일 터치: 팬(드래그) - CSS transform 기반 (GPU 가속)
             if (this.touchState.isDragging && this.touchState.lastTouch) {
-                // 현재/이전 터치 지점을 ViewBox 좌표로 변환
-                const currentView = this.screenToViewBox(touch.clientX, touch.clientY);
-                const lastView = this.screenToViewBox(this.touchState.lastTouch.x, this.touchState.lastTouch.y);
+                // 스크린 좌표에서의 이동 거리 (픽셀)
+                const screenDeltaX = touch.clientX - this.touchState.lastTouch.x;
+                const screenDeltaY = touch.clientY - this.touchState.lastTouch.y;
                 
-                const viewDeltaX = (lastView.x - currentView.x) * this.panSensitivity;
-                const viewDeltaY = (lastView.y - currentView.y) * this.panSensitivity;
+                // 누적 transform offset 업데이트
+                if (!this.dragTransform) {
+                    this.dragTransform = { x: 0, y: 0 };
+                }
+                this.dragTransform.x += screenDeltaX;
+                this.dragTransform.y += screenDeltaY;
                 
-                // ViewBox 이동 (크기는 유지)
-                const originalWidth = this.viewBox.width;
-                const originalHeight = this.viewBox.height;
-                this.viewBox.x += viewDeltaX;
-                this.viewBox.y += viewDeltaY;
-                // 크기 유지 (드래그 중 축소 방지)
-                this.viewBox.width = originalWidth;
-                this.viewBox.height = originalHeight;
-                
-                // Throttle 적용된 업데이트 (~60fps)
-                this.updateViewBoxThrottled();
+                // CSS transform으로 즉시 이동 (GPU 가속, 매우 빠름)
+                this.svg.style.transform = `translateZ(0) translate(${this.dragTransform.x}px, ${this.dragTransform.y}px)`;
+                this.canvas.style.transform = `translate(${this.dragTransform.x}px, ${this.dragTransform.y}px)`;
             }
             
             // 현재 위치 저장
@@ -4000,6 +4035,11 @@ class DxfPhotoEditor {
                 setTimeout(() => {
                     this.touchState.wasDragging = false;
                 }, 100);
+                
+                // CSS transform을 viewBox로 동기화
+                if (this.dragTransform && (this.dragTransform.x !== 0 || this.dragTransform.y !== 0)) {
+                    this.syncTransformToViewBox();
+                }
             }
             
             // 핀치줌 중이었다면 wasPinching 플래그 설정 (클릭 이벤트 방지)
@@ -4081,6 +4121,9 @@ class DxfPhotoEditor {
             this.touchState.startX = touch.clientX;
             this.touchState.startY = touch.clientY;
             this.touchState.lastTouch = { x: touch.clientX, y: touch.clientY };
+            
+            // CSS transform 드래그 초기화 (핀치줌 → 팬 전환)
+            this.dragTransform = { x: 0, y: 0 };
         }
     }
     
