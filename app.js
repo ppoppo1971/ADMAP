@@ -2710,6 +2710,7 @@ class DxfPhotoEditor {
     /**
      * 줌 레벨 표시 업데이트 (우측 하단)
      * originalViewBox 대비 현재 viewBox의 확대 배율 계산
+     * + 확대율에 따라 선 두께 CSS 변수 동적 조정
      */
     updateZoomLevelDisplay() {
         const zoomDisplay = document.getElementById('zoom-level-display');
@@ -2729,6 +2730,31 @@ class DxfPhotoEditor {
         }
         
         zoomDisplay.textContent = displayText;
+        
+        // ⭐ 확대율 12배 이상이면 선 두께 배율 증가 (가독성 향상)
+        this.updateStrokeWidth(zoomLevel);
+    }
+    
+    /**
+     * 확대율에 따라 SVG 선 두께 CSS 변수 동적 조정
+     * 12배 이상 확대 시 선이 점점 두꺼워져서 가독성 유지
+     * @param {number} zoomLevel - 현재 확대 배율
+     */
+    updateStrokeWidth(zoomLevel) {
+        // 12배 미만: 기본 배율 (1)
+        // 12배 이상: 확대율에 비례하여 선 두께 증가
+        let strokeMultiplier;
+        
+        if (zoomLevel < 12) {
+            strokeMultiplier = 1;
+        } else {
+            // 12배 이상: (zoomLevel / 12)로 배율 증가
+            // 예: 12배 → 1, 24배 → 2, 36배 → 3
+            strokeMultiplier = zoomLevel / 12;
+        }
+        
+        // CSS 변수 업데이트 (모든 SVG 요소에 자동 적용)
+        document.documentElement.style.setProperty('--dxf-stroke-multiplier', strokeMultiplier);
     }
     
     /**
@@ -2896,7 +2922,7 @@ class DxfPhotoEditor {
         line.setAttribute('y2', -entity.vertices[1].y);
         line.setAttribute('stroke', this.getEntityColor(entity)); // 실제 색상
         
-        // 조건부 선 굵기: 실제 굵기가 0 초과면 2px, 아니면 0.5px
+        // 조건부 선 굵기: 실제 굵기가 0 초과면 thick, 아니면 thin (CSS 클래스 사용)
         // ⭐ lineweight가 undefined인 경우 처리 개선
         const lineweight = (entity.lineweight !== undefined && entity.lineweight !== null && entity.lineweight >= 0) 
             ? entity.lineweight 
@@ -2905,16 +2931,16 @@ class DxfPhotoEditor {
             ? entity.constantWidth 
             : 0;
         const actualWidth = Math.max(lineweight >= 0 ? lineweight : 0, constantWidth);
-        const strokeWidth = (actualWidth > 0) ? 2 : 0.5;
+        const strokeClass = (actualWidth > 0) ? 'dxf-thick' : 'dxf-thin';
         
         // 디버그용 데이터 속성 추가
         line.setAttribute('data-lineweight', entity.lineweight);
         line.setAttribute('data-constantwidth', entity.constantWidth || 0);
         line.setAttribute('data-actualwidth', actualWidth);
-        line.setAttribute('data-strokewidth', strokeWidth);
         line.setAttribute('data-layer', entity.layer || '');
         
-        line.setAttribute('style', `stroke-width: ${strokeWidth}px; vector-effect: non-scaling-stroke;`);
+        // CSS 클래스로 선 두께 제어 (확대율에 따라 동적 조정됨)
+        line.classList.add(strokeClass);
         
         line.setAttribute('stroke-linecap', 'round');
         
@@ -2952,7 +2978,7 @@ class DxfPhotoEditor {
         element.setAttribute('fill', 'none');
         element.setAttribute('stroke', this.getEntityColor(entity)); // 실제 색상
         
-        // 조건부 선 굵기: 실제 굵기가 0 초과면 2px, 아니면 0.5px
+        // 조건부 선 굵기: 실제 굵기가 0 초과면 thick, 아니면 thin (CSS 클래스 사용)
         // ⭐ lineweight가 undefined인 경우 처리 개선
         const lineweight = (entity.lineweight !== undefined && entity.lineweight !== null && entity.lineweight >= 0) 
             ? entity.lineweight 
@@ -2961,16 +2987,16 @@ class DxfPhotoEditor {
             ? entity.constantWidth 
             : 0;
         const actualWidth = Math.max(lineweight >= 0 ? lineweight : 0, constantWidth);
-        const strokeWidth = (actualWidth > 0) ? 2 : 0.5;
+        const strokeClass = (actualWidth > 0) ? 'dxf-thick' : 'dxf-thin';
         
         // 디버그용 데이터 속성 추가
         element.setAttribute('data-lineweight', entity.lineweight);
         element.setAttribute('data-constantwidth', entity.constantWidth || 0);
         element.setAttribute('data-actualwidth', actualWidth);
-        element.setAttribute('data-strokewidth', strokeWidth);
         element.setAttribute('data-layer', entity.layer || '');
         
-        element.setAttribute('style', `stroke-width: ${strokeWidth}px; vector-effect: non-scaling-stroke;`);
+        // CSS 클래스로 선 두께 제어 (확대율에 따라 동적 조정됨)
+        element.classList.add(strokeClass);
         
         element.setAttribute('stroke-linejoin', 'round');
         element.setAttribute('stroke-linecap', 'round');
@@ -2988,12 +3014,12 @@ class DxfPhotoEditor {
         circle.setAttribute('fill', 'none');
         circle.setAttribute('stroke', this.getEntityColor(entity)); // 실제 색상
         
-        // 조건부 선 굵기: 실제 굵기가 0 초과면 2px, 아니면 0.5px
+        // 조건부 선 굵기: CSS 클래스 사용 (확대율에 따라 동적 조정됨)
         const lineweight = (entity.lineweight >= 0) ? entity.lineweight : 0;
         const constantWidth = entity.constantWidth || 0;
         const actualWidth = Math.max(lineweight, constantWidth);
-        const strokeWidth = (actualWidth > 0) ? 2 : 0.5;
-        circle.setAttribute('style', `stroke-width: ${strokeWidth}; vector-effect: non-scaling-stroke;`);
+        const strokeClass = (actualWidth > 0) ? 'dxf-thick' : 'dxf-thin';
+        circle.classList.add(strokeClass);
         
         return circle;
     }
@@ -3018,12 +3044,12 @@ class DxfPhotoEditor {
         path.setAttribute('fill', 'none');
         path.setAttribute('stroke', this.getEntityColor(entity)); // 실제 색상
         
-        // 조건부 선 굵기: 실제 굵기가 0 초과면 2px, 아니면 0.5px
+        // 조건부 선 굵기: CSS 클래스 사용 (확대율에 따라 동적 조정됨)
         const lineweight = (entity.lineweight >= 0) ? entity.lineweight : 0;
         const constantWidth = entity.constantWidth || 0;
         const actualWidth = Math.max(lineweight, constantWidth);
-        const strokeWidth = (actualWidth > 0) ? 2 : 0.5;
-        path.setAttribute('style', `stroke-width: ${strokeWidth}; vector-effect: non-scaling-stroke;`);
+        const strokeClass = (actualWidth > 0) ? 'dxf-thick' : 'dxf-thin';
+        path.classList.add(strokeClass);
         
         return path;
     }
@@ -3170,15 +3196,14 @@ class DxfPhotoEditor {
         
         const size = 5;
         
-        // 십자 표시
+        // 십자 표시 (CSS 클래스 사용)
         const line1 = document.createElementNS('http://www.w3.org/2000/svg', 'line');
         line1.setAttribute('x1', entity.position.x - size);
         line1.setAttribute('y1', -entity.position.y);
         line1.setAttribute('x2', entity.position.x + size);
         line1.setAttribute('y2', -entity.position.y);
         line1.setAttribute('stroke', '#FF6600');
-        line1.setAttribute('stroke-width', '0.5'); // 얇게
-        line1.setAttribute('vector-effect', 'non-scaling-stroke');
+        line1.classList.add('dxf-thin');
         
         const line2 = document.createElementNS('http://www.w3.org/2000/svg', 'line');
         line2.setAttribute('x1', entity.position.x);
@@ -3186,8 +3211,7 @@ class DxfPhotoEditor {
         line2.setAttribute('x2', entity.position.x);
         line2.setAttribute('y2', -entity.position.y + size);
         line2.setAttribute('stroke', '#FF6600');
-        line2.setAttribute('stroke-width', '0.5'); // 얇게
-        line2.setAttribute('vector-effect', 'non-scaling-stroke');
+        line2.classList.add('dxf-thin');
         
         group.appendChild(line1);
         group.appendChild(line2);
@@ -3208,12 +3232,12 @@ class DxfPhotoEditor {
         polyline.setAttribute('fill', 'none');
         polyline.setAttribute('stroke', this.getEntityColor(entity)); // 실제 색상
         
-        // 조건부 선 굵기: 실제 굵기가 0 초과면 2px, 아니면 0.5px
+        // 조건부 선 굵기: CSS 클래스 사용 (확대율에 따라 동적 조정됨)
         const lineweight = (entity.lineweight >= 0) ? entity.lineweight : 0;
         const constantWidth = entity.constantWidth || 0;
         const actualWidth = Math.max(lineweight, constantWidth);
-        const strokeWidth = (actualWidth > 0) ? 2 : 0.5;
-        polyline.setAttribute('style', `stroke-width: ${strokeWidth}; vector-effect: non-scaling-stroke;`);
+        const strokeClass = (actualWidth > 0) ? 'dxf-thick' : 'dxf-thin';
+        polyline.classList.add(strokeClass);
         
         return polyline;
     }
@@ -3237,12 +3261,12 @@ class DxfPhotoEditor {
         ellipse.setAttribute('fill', 'none');
         ellipse.setAttribute('stroke', this.getEntityColor(entity)); // 실제 색상
         
-        // 조건부 선 굵기: 실제 굵기가 0 초과면 2px, 아니면 0.5px
+        // 조건부 선 굵기: CSS 클래스 사용 (확대율에 따라 동적 조정됨)
         const lineweight = (entity.lineweight >= 0) ? entity.lineweight : 0;
         const constantWidth = entity.constantWidth || 0;
         const actualWidth = Math.max(lineweight, constantWidth);
-        const strokeWidth = (actualWidth > 0) ? 2 : 0.5;
-        ellipse.setAttribute('style', `stroke-width: ${strokeWidth}; vector-effect: non-scaling-stroke;`);
+        const strokeClass = (actualWidth > 0) ? 'dxf-thick' : 'dxf-thin';
+        ellipse.classList.add(strokeClass);
         
         return ellipse;
     }

@@ -185,8 +185,14 @@ DMAP - DXF 도면 사진 편집기 (UI)
             touch-action: none; /* 확대/축소 방지 */
         }
 
-        /* SVG 내부 모든 요소의 선 굵기 강제 */
-        /* stroke-width는 JavaScript에서 동적으로 설정 (조건부 선 굵기) */
+        /* SVG 선 두께 CSS 변수 (확대율에 따라 동적 조정) */
+        :root {
+            --dxf-stroke-thin: 0.5px;   /* 기본 얇은 선 */
+            --dxf-stroke-thick: 2px;    /* 기본 두꺼운 선 */
+            --dxf-stroke-multiplier: 1; /* 확대율 기반 배율 */
+        }
+        
+        /* SVG 내부 모든 요소의 선 굵기 - CSS 변수 사용 */
         #svg line,
         #svg polyline,
         #svg circle,
@@ -194,6 +200,16 @@ DMAP - DXF 도면 사진 편집기 (UI)
         #svg path,
         #svg polygon {
             vector-effect: non-scaling-stroke;
+        }
+        
+        /* 얇은 선 (lineweight 없는 객체) */
+        #svg .dxf-thin {
+            stroke-width: calc(var(--dxf-stroke-thin) * var(--dxf-stroke-multiplier)) !important;
+        }
+        
+        /* 두꺼운 선 (lineweight 있는 객체) */
+        #svg .dxf-thick {
+            stroke-width: calc(var(--dxf-stroke-thick) * var(--dxf-stroke-multiplier)) !important;
         }
         
         /* POINT는 매우 작게 */
