@@ -59,8 +59,6 @@ class DxfPhotoEditor {
         this.svg = document.getElementById('svg');
         this.container = document.getElementById('canvas-container');
         this.photoMemoInput = document.getElementById('photo-memo-input');
-        this.mapContainer = document.getElementById('map-container');
-        this.mapElement = document.getElementById('map');
         
         // SVG 그룹 요소 생성
         this.svgGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
@@ -125,25 +123,6 @@ class DxfPhotoEditor {
         // 이미지 용량 설정 (기본값: 2MB)
         // '500KB', '1MB', '2MB', 'original' 중 하나
         this.imageSizeSetting = localStorage.getItem('dmap:imageSize') || '2MB';
-        
-        // 지도 관련
-        this.map = null; // Google Maps 객체
-        this.currentMapType = null; // 현재 지도 타입: 'google', 'vworld', null
-        this.mapInitialized = false;
-        this.dxfBounds = null; // DXF 도면의 EPSG:5186 좌표 경계 { minX, minY, maxX, maxY }
-        this.dxfBoundsWGS84 = null; // 변환된 WGS84 좌표 경계 { minLat, minLng, maxLat, maxLng }
-        this.mapBoundsListener = null; // 지도 bounds 변경 리스너
-        this.boundsChangeTimeout = null; // bounds_changed throttle용
-        this.lastSyncedViewBoxSize = null; // 지도와 동기화된 마지막 뷰박스 크기
-        this.isMapMode = false; // 지도 모드 여부
-        this.syncingFromMap = false; // 지도에서 도면으로 동기화 중인지 (무한 루프 방지)
-        this.syncingFromViewBox = false; // 도면에서 지도로 동기화 중인지 (무한 루프 방지)
-        this.mapOverlay = null; // 지도 좌표→픽셀 변환용 OverlayView
-        this.currentLocationData = null; // 현재 위치 정보 캐시
-        this.currentLocationMarker = null; // 현재 위치 마커
-        this.currentLocationInfoWindow = null; // 현재 위치 정보창
-        this.mapLocationInfoWindowClickListener = null; // 지도 클릭 리스너 (정보창 닫기용)
-        this.mapLocationInfoWindowContainerListeners = null; // 지도 컨테이너 클릭/터치 리스너
         
         // 렌더링 최적화
         this.redrawPending = false;
@@ -503,7 +482,7 @@ class DxfPhotoEditor {
         const isDoubleTap = timeDiff < this.doubleTapDelay && distance < this.doubleTapDistance;
         
         if (isDoubleTap) {
-            console.log('🎯🎯 더블탭 감지! 이동 + 20배 고정 확대...');
+            this.debugLog('🎯🎯 더블탭 감지! 이동 + 20배 고정 확대...');
             this.clearPendingSingleTap();
             
             // 더블탭한 위치를 ViewBox 좌표로 변환
@@ -547,7 +526,7 @@ class DxfPhotoEditor {
         const maxSize = (this.originalViewBox?.width || 1000) * 10;
         
         if (newWidth < minSize || newWidth > maxSize) {
-            console.log('⚠️ 줌 제한 초과');
+            this.debugLog('⚠️ 줌 제한 초과');
             return;
         }
         
@@ -763,7 +742,7 @@ class DxfPhotoEditor {
         const menuImageSizeBtn = document.getElementById('menu-image-size');
         const menuConsoleBtn = document.getElementById('menu-console');
         
-        console.log('🔍 슬라이딩 메뉴 버튼 확인:', {
+        this.debugLog('🔍 슬라이딩 메뉴 버튼 확인:', {
             menuBackBtn: !!menuBackBtn,
             menuFitViewBtn: !!menuFitViewBtn,
             menuCheckMissingBtn: !!menuCheckMissingBtn,
@@ -793,7 +772,7 @@ class DxfPhotoEditor {
         
         if (menuCheckMissingBtn) {
             menuCheckMissingBtn.addEventListener('click', (e) => {
-                console.log('✅ 사진누락확인 버튼 클릭됨!');
+                this.debugLog('✅ 사진누락확인 버튼 클릭됨!');
                 e.stopPropagation();
                 this.closeSlideMenu();
                 this.checkMissingPhotos();
@@ -820,7 +799,7 @@ class DxfPhotoEditor {
         
         if (menuImageSizeBtn) {
             menuImageSizeBtn.addEventListener('click', (e) => {
-                console.log('✅ 용량조정 버튼 클릭됨!');
+                this.debugLog('✅ 용량조정 버튼 클릭됨!');
                 e.stopPropagation();
                 this.closeSlideMenu();
                 this.showImageSizeModal();
@@ -831,7 +810,7 @@ class DxfPhotoEditor {
         
         if (menuConsoleBtn) {
             menuConsoleBtn.addEventListener('click', (e) => {
-                console.log('✅ 콘솔 버튼 클릭됨!');
+                this.debugLog('✅ 콘솔 버튼 클릭됨!');
                 e.stopPropagation();
                 this.closeSlideMenu();
                 
@@ -841,7 +820,7 @@ class DxfPhotoEditor {
                 if (vcSwitch) {
                     // vConsole의 스위치 버튼을 클릭하여 토글
                     vcSwitch.click();
-                    console.log('📱 vConsole 토글됨 (스위치 버튼 클릭)');
+                    this.debugLog('📱 vConsole 토글됨 (스위치 버튼 클릭)');
                 } else {
                     // 스위치 버튼이 없으면 직접 API 사용
                     const vc = window.vConsole || (typeof vConsole !== 'undefined' ? vConsole : null);
@@ -855,14 +834,14 @@ class DxfPhotoEditor {
                         
                         if (isOpen) {
                             vc.hide();
-                            console.log('📱 vConsole 닫힘 (API)');
+                            this.debugLog('📱 vConsole 닫힘 (API)');
                         } else {
                             vc.show();
-                            console.log('📱 vConsole 열림 (API)');
+                            this.debugLog('📱 vConsole 열림 (API)');
                         }
                     } else {
                         console.warn('⚠️ vConsole이 초기화되지 않았습니다');
-                        console.log('window.vConsole:', typeof window.vConsole, window.vConsole);
+                        this.debugLog('window.vConsole:', typeof window.vConsole, window.vConsole);
                     }
                 }
             });
@@ -1206,7 +1185,7 @@ class DxfPhotoEditor {
             
             // 컨텍스트 메뉴 외부를 클릭한 경우에만 닫기
             if (!contextMenu.contains(e.target)) {
-                console.log('👆 메뉴 외부 클릭 - 메뉴 닫기');
+                this.debugLog('👆 메뉴 외부 클릭 - 메뉴 닫기');
                 this.hideContextMenu();
             }
         };
@@ -1329,7 +1308,7 @@ class DxfPhotoEditor {
      * 롱프레스 완료 시 실행
      */
     onLongPress() {
-        console.log('🔔 롱프레스 감지!', this.longPressPosition);
+        this.debugLog('🔔 롱프레스 감지!', this.longPressPosition);
         
         this.isLongPress = true;
         this.longPressTriggered = true;
@@ -1348,7 +1327,7 @@ class DxfPhotoEditor {
      * 컨텍스트 메뉴 표시
      */
     showContextMenu(screenX, screenY) {
-        console.log('📋 컨텍스트 메뉴 표시 시작...');
+        this.debugLog('📋 컨텍스트 메뉴 표시 시작...');
         const contextMenu = document.getElementById('context-menu');
         
         if (!contextMenu) {
@@ -1377,7 +1356,7 @@ class DxfPhotoEditor {
         contextMenu.style.top = top + 'px';
         contextMenu.classList.add('active');
         
-        console.log(`✅ 컨텍스트 메뉴 표시됨 (위치: ${left}, ${top})`);
+        this.debugLog(`✅ 컨텍스트 메뉴 표시됨 (위치: ${left}, ${top})`);
         
         // ⭐ 메뉴 표시 직후 이벤트 리스너 등록
         this.setupContextMenuListeners();
@@ -1387,7 +1366,7 @@ class DxfPhotoEditor {
      * 컨텍스트 메뉴 버튼 이벤트 리스너 등록 (메뉴 표시될 때마다 호출)
      */
     setupContextMenuListeners() {
-        console.log('🎯 컨텍스트 메뉴 이벤트 리스너 등록 시작...');
+        this.debugLog('🎯 컨텍스트 메뉴 이벤트 리스너 등록 시작...');
         
         const cameraBtn = document.getElementById('camera-btn');
         const galleryBtn = document.getElementById('gallery-btn');
@@ -1398,7 +1377,7 @@ class DxfPhotoEditor {
             return;
         }
         
-        console.log('✅ 모든 버튼 요소 발견됨');
+        this.debugLog('✅ 모든 버튼 요소 발견됨');
         
         // 기존 리스너 제거를 위해 클론 사용 (간단한 방법)
         const newCameraBtn = cameraBtn.cloneNode(true);
@@ -1411,22 +1390,22 @@ class DxfPhotoEditor {
         
         // 카메라 버튼
         const handleCamera = (e) => {
-            console.log('📷 카메라 버튼 클릭!');
+            this.debugLog('📷 카메라 버튼 클릭!');
             e.preventDefault();
             e.stopPropagation();
             
             // 롱프레스 위치 확인
-            console.log('   롱프레스 위치:', this.longPressPosition);
+            this.debugLog('   롱프레스 위치:', this.longPressPosition);
             
             // 메뉴 닫기
             this.hideContextMenu();
             
             // ⭐ iOS Safari에서는 사용자 제스처에서 직접 호출해야 함
             const cameraInput = document.getElementById('camera-input');
-            console.log('📸 카메라 입력 요소:', cameraInput);
+            this.debugLog('📸 카메라 입력 요소:', cameraInput);
             
             if (cameraInput) {
-                console.log('📸 카메라 입력 클릭 시도...');
+                this.debugLog('📸 카메라 입력 클릭 시도...');
                 // 즉시 클릭 (setTimeout 없이)
                 cameraInput.click();
                 console.log('✅ 카메라 입력 클릭 완료');
@@ -1445,7 +1424,7 @@ class DxfPhotoEditor {
             e.stopPropagation();
             
             // 롱프레스 위치 확인
-            console.log('   롱프레스 위치:', this.longPressPosition);
+            this.debugLog('   롱프레스 위치:', this.longPressPosition);
             
             // 메뉴 닫기
             this.hideContextMenu();
@@ -1474,7 +1453,7 @@ class DxfPhotoEditor {
             e.stopPropagation();
             
             // 롱프레스 위치 확인
-            console.log('   롱프레스 위치:', this.longPressPosition);
+            this.debugLog('   롱프레스 위치:', this.longPressPosition);
             
             // 메뉴 닫기
             this.hideContextMenu();
@@ -4061,8 +4040,6 @@ class DxfPhotoEditor {
                         const tappedPhoto = this.checkPhotoClick(touch.clientX, touch.clientY, { openModal: false });
                         if (tappedPhoto) {
                             this.queueSingleTapAction(() => this.openPhotoViewModal(tappedPhoto.id));
-                        } else if (this.isTapOnCurrentLocation(touch.clientX, touch.clientY)) {
-                            this.queueSingleTapAction(() => this.openCurrentLocationInfo());
                         } else {
                             const tappedText = this.checkTextClick(touch.clientX, touch.clientY, { openModal: false });
                             if (tappedText) {
@@ -4112,14 +4089,6 @@ class DxfPhotoEditor {
                 }, 300); // 300ms로 증가 (더블탭 감지 시간과 동일하게)
             }
             
-            // 드래그나 핀치줌이 끝났을 때 지도 동기화 (지도 모드일 때만)
-            if ((wasDragging || wasPinching) && this.isMapMode && this.map && !this.syncingFromMap && this.dxfBoundsWGS84) {
-                // 약간의 지연 후 동기화 (터치 이벤트 처리 완료 후)
-                setTimeout(() => {
-                    this.syncViewBoxToMapBounds();
-                }, 50);
-            }
-            
             // rect 캐시 무효화 (ViewBox가 변경되었을 수 있음)
             this.cachedRect = null;
             
@@ -4158,16 +4127,7 @@ class DxfPhotoEditor {
                     this.touchState.wasPinching = false;
                 }, 300); // 300ms로 증가 (더블탭 감지 시간과 동일하게)
                 
-                // 핀치줌 종료 시 지도 동기화 (지도 모드일 때만)
-                if (this.isMapMode && this.map && !this.syncingFromMap && this.dxfBoundsWGS84) {
-                    setTimeout(() => {
-                        this.syncViewBoxToMapBounds();
-                    }, 50);
-                }
-                
                 // 핀치줌 종료 시 사진 다시 그리기 (최신 상태 반영)
-                // 주의: 핀치줌 중에도 이미 사진을 그리고 있으므로, 
-                // 종료 시에는 이미 최신 상태이지만 확실히 하기 위해 한 번 더 그리기
                 requestAnimationFrame(() => {
                     this.drawPhotosCanvas();
                 });

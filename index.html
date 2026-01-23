@@ -119,41 +119,6 @@ DMAP - DXF 도면 사진 편집기 (UI)
             background: #e8e8e8;
         }
 
-        #map-container {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            z-index: 0;
-            visibility: hidden; /* display: none 대신 visibility 사용 (크기 유지) */
-            opacity: 0;
-        }
-        
-        #map-container.visible {
-            visibility: visible;
-            opacity: 1;
-        }
-        
-        #map {
-            width: 100%;
-            height: 100%;
-        }
-        
-        /* Google Maps 컨트롤 숨기기 */
-        .gm-style-cc,
-        .gm-style a[href^="https://maps.google.com"],
-        a[href^="https://maps.google.com/maps"] {
-            display: none !important;
-        }
-        
-        /* InfoWindow X 버튼 숨기기 */
-        .gm-ui-hover-effect,
-        .gm-style-iw button[aria-label="Close"],
-        .gm-style-iw button[title="Close"] {
-            display: none !important;
-        }
-        
         #svg {
             position: absolute;
             top: 0;
