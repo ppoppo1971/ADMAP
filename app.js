@@ -124,20 +124,16 @@ class DxfPhotoEditor {
         // '500KB', '1MB', '2MB', 'original' 중 하나
         this.imageSizeSetting = localStorage.getItem('dmap:imageSize') || '2MB';
         
-        // 절대적 범위 확대 단계 (밀리미터 단위)
-        // 전체보기 → 500m → 200m → 100m → 50m → 20m → 10m → 5m → 2m → 1m
+        // 절대적 범위 확대 단계 (도면 좌표 단위 = 미터로 가정)
+        // 전체보기 → 500m → 200m → 100m → 50m → 20m (최대 확대)
         this.zoomRanges = [
-            500000,  // 500m
-            200000,  // 200m
-            100000,  // 100m
-            50000,   // 50m
-            20000,   // 20m (더블탭 기본값)
-            10000,   // 10m
-            5000,    // 5m
-            2000,    // 2m
-            1000     // 1m
+            500,     // 500m
+            200,     // 200m
+            100,     // 100m
+            50,      // 50m (더블탭 기본값)
+            20       // 20m (최대 확대)
         ];
-        this.defaultZoomRange = 20000; // 더블탭 시 20m 범위
+        this.defaultZoomRange = 50; // 더블탭 시 50m 범위
         this.currentRangeIndex = -1; // -1 = 전체보기
         
         // 렌더링 최적화
@@ -2746,11 +2742,8 @@ class DxfPhotoEditor {
         const zoomDisplay = document.getElementById('zoom-level-display');
         if (!zoomDisplay) return;
         
-        // 현재 viewBox 너비 (mm 단위)
-        const rangeWidth = this.viewBox.width;
-        
-        // 미터로 변환하여 표시
-        const rangeMeters = rangeWidth / 1000;
+        // 현재 viewBox 너비 (도면 좌표 단위 = 미터)
+        const rangeMeters = this.viewBox.width;
         
         let displayText;
         if (rangeMeters >= 1000) {
@@ -2770,30 +2763,30 @@ class DxfPhotoEditor {
         zoomDisplay.textContent = displayText;
         
         // ⭐ 범위에 따라 선 두께 배율 증가 (가독성 향상)
-        // 20m(20000mm) 이하일 때 선 두께 증가
-        this.updateStrokeWidth(rangeWidth);
+        // 50m 이하일 때 선 두께 증가
+        this.updateStrokeWidth(rangeMeters);
     }
     
     /**
      * 범위에 따라 SVG 선 두께 CSS 변수 동적 조정
-     * 20m 이하 범위에서 선이 점점 두꺼워져서 가독성 유지
-     * @param {number} rangeWidth - 현재 viewBox 너비 (mm 단위)
+     * 50m 이하 범위에서 선이 점점 두꺼워져서 가독성 유지
+     * @param {number} rangeMeters - 현재 viewBox 너비 (미터 단위)
      */
-    updateStrokeWidth(rangeWidth) {
-        // 20m(20000mm) 이상: 기본 배율 (1)
-        // 20m 미만: 범위에 반비례하여 선 두께 증가
+    updateStrokeWidth(rangeMeters) {
+        // 50m 이상: 기본 배율 (1)
+        // 50m 미만: 범위에 반비례하여 선 두께 증가
         let strokeMultiplier;
         
-        const baseRange = 20000; // 기준 범위: 20m
+        const baseRange = 50; // 기준 범위: 50m
         
-        if (rangeWidth >= baseRange) {
+        if (rangeMeters >= baseRange) {
             strokeMultiplier = 1;
         } else {
-            // 20m 미만: (20000 / rangeWidth)로 배율 증가
-            // 예: 20m → 1, 10m → 2, 5m → 4, 2m → 10
-            strokeMultiplier = baseRange / rangeWidth;
-            // 최대 10배로 제한
-            strokeMultiplier = Math.min(strokeMultiplier, 10);
+            // 50m 미만: (50 / rangeMeters)로 배율 증가
+            // 예: 50m → 1, 25m → 2, 20m → 2.5
+            strokeMultiplier = baseRange / rangeMeters;
+            // 최대 5배로 제한
+            strokeMultiplier = Math.min(strokeMultiplier, 5);
         }
         
         // CSS 변수 업데이트 (모든 SVG 요소에 자동 적용)
