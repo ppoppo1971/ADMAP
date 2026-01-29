@@ -419,14 +419,20 @@
         
         console.log(`📦 내보내기 준비: 사진 ${photos.length}장, 총 ${totalSizeMB.toFixed(2)}MB`);
 
+        // ★ 테스트: 항상 순차 다운로드 방식 사용 (ZIP 메모리 문제 회피)
+        console.log(`📦 순차 다운로드 방식으로 내보내기 시작...`);
+        return await exportProjectSequential(dxfFile, onProgress);
+
+        /* 원래 코드 - ZIP 방식 (나중에 복원)
         // 대용량 감지 시 순차 다운로드로 전환
         const MAX_ZIP_SIZE_MB = 10;
         if (totalSizeMB > MAX_ZIP_SIZE_MB) {
             console.log(`⚠️ 용량이 ${MAX_ZIP_SIZE_MB}MB를 초과하여 개별 다운로드 방식으로 전환`);
             return await exportProjectSequential(dxfFile, onProgress);
         }
+        */
 
-        // 소용량: 기존 ZIP 방식
+        // 소용량: 기존 ZIP 방식 (현재 비활성화)
         const metadata = {
             dxfFile,
             photos: photos.map((photo) => ({
