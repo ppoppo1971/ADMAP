@@ -1790,7 +1790,9 @@ class DxfPhotoEditor {
     }
 
     /**
-     * 로컬 저장 데이터 내보내기 (사진 + 메타데이터 ZIP)
+     * 로컬 저장 데이터 내보내기 (사진 + 메타데이터)
+     * - 소용량(10MB 이하): ZIP 파일 하나로 다운로드
+     * - 대용량(10MB 초과): 개별 파일 순차 다운로드
      */
     async exportLocalData() {
         try {
@@ -1799,9 +1801,36 @@ class DxfPhotoEditor {
                 return;
             }
             await this.ensureLocalStore();
-            this.showToast('📦 내보내기 준비 중...');
-            await window.localStore.exportProjectZip(this.dxfFileFullName);
-            this.showToast('✅ 내보내기 완료');
+            
+            // 사진 목록 로드하여 용량 확인
+            const photos = await window.localStore.loadPhotos(this.dxfFileFullName);
+            let totalSize = 0;
+            photos.forEach(p => { if (p.blob) totalSize += p.blob.size; });
+            const totalSizeMB = totalSize / 1024 / 1024;
+            
+            if (photos.length === 0) {
+                this.showToast('📭 내보낼 사진이 없습니다.');
+                return;
+            }
+            
+            this.showToast(`📦 내보내기 시작 (${photos.length}장, ${totalSizeMB.toFixed(1)}MB)...`);
+            
+            // 진행 상황 콜백
+            const onProgress = (current, total, fileName) => {
+                this.showToast(`📥 다운로드 중... (${current}/${total})`);
+            };
+            
+            const result = await window.localStore.exportProjectZip(this.dxfFileFullName, onProgress);
+            
+            if (result && result.success) {
+                if (result.type === 'zip') {
+                    this.showToast('✅ ZIP 파일 다운로드 완료');
+                } else {
+                    this.showToast(`✅ ${result.totalFiles}개 파일 다운로드 완료`);
+                }
+            } else {
+                this.showToast('✅ 내보내기 완료');
+            }
         } catch (error) {
             console.error('❌ 내보내기 실패:', error);
             this.showToast('⚠️ 내보내기 실패: ' + error.message);

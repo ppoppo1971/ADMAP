@@ -314,11 +314,39 @@
     }
 
     /**
-     * 프로젝트 ZIP 내보내기 (안드로이드/iOS 호환 개선)
-     * - 모바일에서 다운로드 완료 전 URL 해제 방지
-     * - 용량 정보 로깅 추가
+     * 단일 파일 다운로드 헬퍼
      */
-    async function exportProjectZip(dxfFile) {
+    function downloadFile(blob, filename) {
+        return new Promise((resolve) => {
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = filename;
+            
+            const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+            if (isIOS) {
+                link.target = '_blank';
+            }
+            
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            
+            // 다운로드 완료 대기 후 URL 해제
+            setTimeout(() => {
+                URL.revokeObjectURL(url);
+                resolve(true);
+            }, 1500);
+        });
+    }
+
+    /**
+     * 프로젝트 내보내기 (개별 파일 순차 다운로드 방식)
+     * - ZIP 생성 대신 파일을 하나씩 다운로드
+     * - 메모리 사용량 최소화로 대용량/모바일 안정성 확보
+     * - onProgress: (current, total, fileName) => void 콜백
+     */
+    async function exportProjectSequential(dxfFile, onProgress) {
         const project = (await loadProject(dxfFile)) || {};
         const photos = await loadPhotos(dxfFile);
         const baseName = normalizeBaseName(dxfFile);
@@ -328,6 +356,77 @@
         photos.forEach(p => { if (p.blob) totalSize += p.blob.size; });
         console.log(`📦 내보내기 준비: 사진 ${photos.length}장, 총 ${(totalSize / 1024 / 1024).toFixed(2)}MB`);
 
+        const totalFiles = photos.length + 1; // 메타데이터 + 사진들
+        let currentFile = 0;
+
+        // 1. 메타데이터 JSON 먼저 다운로드
+        const metadata = {
+            dxfFile,
+            photos: photos.map((photo) => ({
+                id: photo.id,
+                fileName: photo.fileName,
+                position: { x: photo.x, y: photo.y },
+                size: { width: photo.width, height: photo.height },
+                memo: photo.memo || '',
+                uploaded: true
+            })),
+            texts: project.texts || [],
+            lastModified: project.lastModified || new Date().toISOString()
+        };
+
+        const metadataBlob = new Blob([JSON.stringify(metadata, null, 2)], { type: 'application/json' });
+        const metadataName = `${baseName}_metadata.json`;
+        
+        currentFile++;
+        if (onProgress) onProgress(currentFile, totalFiles, metadataName);
+        console.log(`📄 [1/${totalFiles}] 메타데이터 다운로드: ${metadataName}`);
+        await downloadFile(metadataBlob, metadataName);
+
+        // 2. 사진 하나씩 순차 다운로드
+        for (let i = 0; i < photos.length; i++) {
+            const photo = photos[i];
+            if (!photo.blob || !photo.fileName) continue;
+
+            currentFile++;
+            if (onProgress) onProgress(currentFile, totalFiles, photo.fileName);
+            console.log(`📷 [${currentFile}/${totalFiles}] 사진 다운로드: ${photo.fileName}`);
+            
+            await downloadFile(photo.blob, photo.fileName);
+            
+            // 다운로드 간 간격 (브라우저 안정성)
+            await new Promise(r => setTimeout(r, 500));
+        }
+
+        console.log(`✅ 내보내기 완료: 총 ${totalFiles}개 파일`);
+        return { success: true, totalFiles };
+    }
+
+    /**
+     * 프로젝트 ZIP 내보내기 (소용량용 - 10MB 이하)
+     * 대용량은 exportProjectSequential 사용 권장
+     * @param {string} dxfFile - DXF 파일명
+     * @param {function} onProgress - 진행 콜백 (current, total, fileName)
+     */
+    async function exportProjectZip(dxfFile, onProgress) {
+        const project = (await loadProject(dxfFile)) || {};
+        const photos = await loadPhotos(dxfFile);
+        const baseName = normalizeBaseName(dxfFile);
+
+        // 용량 계산
+        let totalSize = 0;
+        photos.forEach(p => { if (p.blob) totalSize += p.blob.size; });
+        const totalSizeMB = totalSize / 1024 / 1024;
+        
+        console.log(`📦 내보내기 준비: 사진 ${photos.length}장, 총 ${totalSizeMB.toFixed(2)}MB`);
+
+        // 대용량 감지 시 순차 다운로드로 전환
+        const MAX_ZIP_SIZE_MB = 10;
+        if (totalSizeMB > MAX_ZIP_SIZE_MB) {
+            console.log(`⚠️ 용량이 ${MAX_ZIP_SIZE_MB}MB를 초과하여 개별 다운로드 방식으로 전환`);
+            return await exportProjectSequential(dxfFile, onProgress);
+        }
+
+        // 소용량: 기존 ZIP 방식
         const metadata = {
             dxfFile,
             photos: photos.map((photo) => ({
@@ -357,44 +456,18 @@
             }
         });
 
-        const zipBlob = await createZip(entries);
-        const zipName = `${baseName}_export.zip`;
-        console.log(`📦 ZIP 생성 완료: ${zipName} (${(zipBlob.size / 1024 / 1024).toFixed(2)}MB)`);
+        try {
+            const zipBlob = await createZip(entries);
+            const zipName = `${baseName}_export.zip`;
+            console.log(`📦 ZIP 생성 완료: ${zipName} (${(zipBlob.size / 1024 / 1024).toFixed(2)}MB)`);
 
-        const url = URL.createObjectURL(zipBlob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = zipName;
-        
-        // 모바일 감지
-        const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
-        const isAndroid = /android/i.test(navigator.userAgent);
-        const isMobile = isIOS || isAndroid;
-        
-        // iOS에서는 새 탭에서 열기
-        if (isIOS) {
-            link.target = '_blank';
+            await downloadFile(zipBlob, zipName);
+            return { success: true, type: 'zip', fileName: zipName };
+        } catch (error) {
+            console.error('❌ ZIP 생성 실패, 개별 다운로드로 전환:', error);
+            // ZIP 실패 시 순차 다운로드로 폴백
+            return await exportProjectSequential(dxfFile);
         }
-        
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-        
-        // ✅ 개선: 모바일에서는 URL 해제 지연 (다운로드 완료 대기)
-        if (isMobile) {
-            // 모바일: 용량에 비례하여 대기 (최소 3초, MB당 1초 추가)
-            const delaySec = Math.max(3, Math.ceil(zipBlob.size / 1024 / 1024));
-            console.log(`📱 모바일 감지 - URL 해제 ${delaySec}초 후 예정`);
-            setTimeout(() => {
-                URL.revokeObjectURL(url);
-                console.log('✅ URL 해제 완료');
-            }, delaySec * 1000);
-        } else {
-            // 데스크톱: 1초 후 해제
-            setTimeout(() => URL.revokeObjectURL(url), 1000);
-        }
-        
-        return true;
     }
 
     async function getPhotoDataUrl(photoId) {
@@ -415,6 +488,7 @@
         deletePhotosByDateRange,
         dataUrlToBlob,
         exportProjectZip,
+        exportProjectSequential,
         getPhotoDataUrl
     };
 })();
