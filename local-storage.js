@@ -482,6 +482,57 @@
         return blobToDataUrl(record.blob);
     }
 
+    /**
+     * ZIP 방식으로만 내보내기 (사용자 선택 시)
+     * - 실패 시 자동 전환 없이 오류 반환
+     */
+    async function exportAsZipOnly(dxfFile) {
+        const project = (await loadProject(dxfFile)) || {};
+        const photos = await loadPhotos(dxfFile);
+        const baseName = normalizeBaseName(dxfFile);
+
+        // 용량 계산 및 로깅
+        let totalSize = 0;
+        photos.forEach(p => { if (p.blob) totalSize += p.blob.size; });
+        console.log(`📦 ZIP 내보내기: 사진 ${photos.length}장, 총 ${(totalSize / 1024 / 1024).toFixed(2)}MB`);
+
+        const metadata = {
+            dxfFile,
+            photos: photos.map((photo) => ({
+                id: photo.id,
+                fileName: photo.fileName,
+                position: { x: photo.x, y: photo.y },
+                size: { width: photo.width, height: photo.height },
+                memo: photo.memo || '',
+                uploaded: true
+            })),
+            texts: project.texts || [],
+            lastModified: project.lastModified || new Date().toISOString()
+        };
+
+        const metadataBlob = new Blob([JSON.stringify(metadata, null, 2)], { type: 'application/json' });
+        const entries = [
+            { name: `${baseName}_metadata.json`, blob: metadataBlob, modifiedAt: new Date() }
+        ];
+
+        photos.forEach((photo) => {
+            if (photo.blob && photo.fileName) {
+                entries.push({
+                    name: photo.fileName,
+                    blob: photo.blob,
+                    modifiedAt: new Date(photo.updatedAt || Date.now())
+                });
+            }
+        });
+
+        const zipBlob = await createZip(entries);
+        const zipName = `${baseName}_export.zip`;
+        console.log(`📦 ZIP 생성 완료: ${zipName} (${(zipBlob.size / 1024 / 1024).toFixed(2)}MB)`);
+
+        await downloadFile(zipBlob, zipName);
+        return { success: true, type: 'zip', fileName: zipName };
+    }
+
     window.localStore = {
         init,
         saveProject,
@@ -495,6 +546,7 @@
         dataUrlToBlob,
         exportProjectZip,
         exportProjectSequential,
+        exportAsZipOnly,
         getPhotoDataUrl
     };
 })();

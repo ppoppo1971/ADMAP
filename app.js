@@ -910,6 +910,34 @@ class DxfPhotoEditor {
             }
         });
         
+        // 내보내기 방식 선택 모달 이벤트
+        const exportMethodModal = document.getElementById('export-method-modal');
+        const exportMethodClose = document.getElementById('export-method-close');
+        const exportMethodCancel = document.getElementById('export-method-cancel');
+        const exportZipBtn = document.getElementById('export-zip-btn');
+        const exportIndividualBtn = document.getElementById('export-individual-btn');
+        
+        if (exportMethodClose) {
+            exportMethodClose.addEventListener('click', () => this.hideExportMethodModal());
+        }
+        if (exportMethodCancel) {
+            exportMethodCancel.addEventListener('click', () => this.hideExportMethodModal());
+        }
+        if (exportZipBtn) {
+            exportZipBtn.addEventListener('click', () => this.exportAsZip());
+        }
+        if (exportIndividualBtn) {
+            exportIndividualBtn.addEventListener('click', () => this.exportAsIndividual());
+        }
+        // 모달 배경 클릭 시 닫기
+        if (exportMethodModal) {
+            exportMethodModal.addEventListener('click', (e) => {
+                if (e.target === exportMethodModal) {
+                    this.hideExportMethodModal();
+                }
+            });
+        }
+        
         // 사진 추가 버튼 제거 (롱프레스로만 추가)
         
         // 내보내기 버튼 제거됨 (Google Drive 자동 저장 사용)
@@ -1790,9 +1818,7 @@ class DxfPhotoEditor {
     }
 
     /**
-     * 로컬 저장 데이터 내보내기 (사진 + 메타데이터)
-     * - 소용량(10MB 이하): ZIP 파일 하나로 다운로드
-     * - 대용량(10MB 초과): 개별 파일 순차 다운로드
+     * 로컬 저장 데이터 내보내기 - 방식 선택 모달 표시
      */
     async exportLocalData() {
         try {
@@ -1813,27 +1839,100 @@ class DxfPhotoEditor {
                 return;
             }
             
-            this.showToast(`📦 내보내기 시작 (${photos.length}장, ${totalSizeMB.toFixed(1)}MB)...`);
+            // 내보내기 정보 저장 (모달에서 사용)
+            this.exportInfo = {
+                photos: photos,
+                totalSize: totalSize,
+                totalSizeMB: totalSizeMB
+            };
+            
+            // 모달 표시
+            this.showExportMethodModal();
+            
+        } catch (error) {
+            console.error('❌ 내보내기 준비 실패:', error);
+            this.showToast('⚠️ 내보내기 준비 실패: ' + error.message);
+        }
+    }
+    
+    /**
+     * 내보내기 방식 선택 모달 표시
+     */
+    showExportMethodModal() {
+        const modal = document.getElementById('export-method-modal');
+        const infoBox = document.getElementById('export-info-box');
+        
+        if (!modal) {
+            console.error('❌ export-method-modal을 찾을 수 없습니다');
+            return;
+        }
+        
+        // 정보 표시
+        if (infoBox && this.exportInfo) {
+            const { photos, totalSizeMB } = this.exportInfo;
+            infoBox.textContent = `사진 ${photos.length}장, 총 ${totalSizeMB.toFixed(1)}MB`;
+        }
+        
+        modal.classList.add('active');
+    }
+    
+    /**
+     * 내보내기 방식 선택 모달 숨기기
+     */
+    hideExportMethodModal() {
+        const modal = document.getElementById('export-method-modal');
+        if (modal) {
+            modal.classList.remove('active');
+        }
+    }
+    
+    /**
+     * ZIP 방식으로 내보내기
+     */
+    async exportAsZip() {
+        this.hideExportMethodModal();
+        
+        try {
+            this.showToast(`📦 ZIP 생성 중...`);
+            
+            const result = await window.localStore.exportAsZipOnly(this.dxfFileFullName);
+            
+            if (result && result.success) {
+                this.showToast('✅ ZIP 파일 다운로드 완료');
+            } else {
+                this.showToast('✅ 내보내기 완료');
+            }
+        } catch (error) {
+            console.error('❌ ZIP 내보내기 실패:', error);
+            this.showToast('⚠️ ZIP 생성 실패: ' + error.message);
+        }
+    }
+    
+    /**
+     * 개별 파일 순차 다운로드로 내보내기
+     */
+    async exportAsIndividual() {
+        this.hideExportMethodModal();
+        
+        try {
+            const { photos, totalSizeMB } = this.exportInfo;
+            this.showToast(`📦 개별 다운로드 시작 (${photos.length}장)...`);
             
             // 진행 상황 콜백
             const onProgress = (current, total, fileName) => {
                 this.showToast(`📥 다운로드 중... (${current}/${total})`);
             };
             
-            const result = await window.localStore.exportProjectZip(this.dxfFileFullName, onProgress);
+            const result = await window.localStore.exportProjectSequential(this.dxfFileFullName, onProgress);
             
             if (result && result.success) {
-                if (result.type === 'zip') {
-                    this.showToast('✅ ZIP 파일 다운로드 완료');
-                } else {
-                    this.showToast(`✅ ${result.totalFiles}개 파일 다운로드 완료`);
-                }
+                this.showToast(`✅ ${result.totalFiles}개 파일 다운로드 완료`);
             } else {
                 this.showToast('✅ 내보내기 완료');
             }
         } catch (error) {
-            console.error('❌ 내보내기 실패:', error);
-            this.showToast('⚠️ 내보내기 실패: ' + error.message);
+            console.error('❌ 개별 다운로드 실패:', error);
+            this.showToast('⚠️ 다운로드 실패: ' + error.message);
         }
     }
 

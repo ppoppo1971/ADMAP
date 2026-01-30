@@ -972,7 +972,7 @@ DMAP - DXF 도면 사진 편집기 (UI)
             사진누락확인
         </button>
         <button class="slide-menu-item" id="menu-export-data">
-            자료 내보내기01
+            자료 내보내기02
         </button>
         <button class="slide-menu-item" id="menu-delete-data">
             자료 삭제
@@ -1156,6 +1156,32 @@ DMAP - DXF 도면 사진 편집기 (UI)
             <div class="text-input-buttons">
                 <button class="btn-cancel" id="zoom-input-cancel">취소</button>
                 <button class="btn-save" id="zoom-input-confirm">적용</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 내보내기 방식 선택 모달 -->
+    <div class="text-input-modal" id="export-method-modal">
+        <div class="text-input-content">
+            <div class="modal-header">
+                <h3>📦 내보내기 방식 선택</h3>
+                <span class="close-btn" id="export-method-close">&times;</span>
+            </div>
+            <div class="info-box" id="export-info-box">
+                사진 0장, 총 0MB
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 12px;">
+                <button class="btn" id="export-zip-btn" style="background: #007AFF; text-align: left; padding: 15px;">
+                    <strong>📁 ZIP 파일</strong>
+                    <br><span style="font-size: 12px; opacity: 0.8;">하나의 압축 파일로 다운로드 (소용량 권장)</span>
+                </button>
+                <button class="btn" id="export-individual-btn" style="background: #34C759; text-align: left; padding: 15px;">
+                    <strong>📷 개별 다운로드</strong>
+                    <br><span style="font-size: 12px; opacity: 0.8;">파일을 하나씩 순차 다운로드 (대용량 권장)</span>
+                </button>
+            </div>
+            <div class="text-input-buttons" style="margin-top: 15px;">
+                <button class="btn-cancel" id="export-method-cancel">취소</button>
             </div>
         </div>
     </div>
